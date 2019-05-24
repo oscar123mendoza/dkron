@@ -148,12 +148,12 @@ func (a *Agent) Stop() error {
 
 func (a *Agent) setupRaft() error {
 	// Create a transport layer
-	addr, err := net.ResolveTCPAddr("tcp", a.config.BindAddr)
+	addr, err := net.ResolveTCPAddr("tcp", a.serf.LocalMember().Addr.String() + ":8947")
 	if err != nil {
 		return err
 	}
-
-	transport, err := raft.NewTCPTransport(a.config.BindAddr, addr, 3, 10*time.Second, os.Stdout)
+	
+	transport, err := raft.NewTCPTransport(addr.String(), addr, 3, 10*time.Second, os.Stdout)
 	if err != nil {
 		return err
 	}
