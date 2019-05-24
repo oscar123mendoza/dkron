@@ -6,6 +6,7 @@ require (
 	github.com/abronan/valkeyrie v0.0.0-20190503213338-20861cd6729e
 	github.com/armon/circbuf v0.0.0-20150827004946-bbbad097214e
 	github.com/armon/go-metrics v0.0.0-20180917152333-f0300d1749da
+	github.com/bbva/raft-badger v0.1.1
 	github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973 // indirect
 	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/circonus-labs/circonus-gometrics v2.2.5+incompatible // indirect
@@ -14,6 +15,7 @@ require (
 	github.com/coreos/go-systemd v0.0.0-20181031085051-9002847aa142 // indirect
 	github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f // indirect
 	github.com/cpuguy83/go-md2man v1.0.8 // indirect
+	github.com/dgraph-io/badger v1.5.4
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/gin-contrib/expvar v0.0.0-20180827025536-251166f58ff2
@@ -32,6 +34,7 @@ require (
 	github.com/hashicorp/go-syslog v1.0.0
 	github.com/hashicorp/hcl v0.0.0-20171017181929-23c074d0eceb // indirect
 	github.com/hashicorp/memberlist v0.1.3
+	github.com/hashicorp/raft v1.0.1
 	github.com/hashicorp/serf v0.8.2
 	github.com/hashicorp/uuid v0.0.0-20160311170451-ebb0a03e909c // indirect
 	github.com/hashicorp/yamux v0.0.0-20181012175058-2f1d1f20f75d // indirect
@@ -40,9 +43,9 @@ require (
 	github.com/jordan-wright/email v0.0.0-20180115032944-94ae17dedda2
 	github.com/json-iterator/go v1.1.5 // indirect
 	github.com/kardianos/osext v0.0.0-20170510131534-ae77be60afb1
-	github.com/kr/pretty v0.1.0 // indirect
 	github.com/magiconair/properties v1.7.3 // indirect
 	github.com/mailru/easyjson v0.0.0-20180823135443-60711f1a8329 // indirect
+	github.com/markthethomas/raft-badger v0.0.0-20190420151455-b37d14e77a69
 	github.com/mattn/go-shellwords v0.0.0-20160315040826-525bedee691b
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/mitchellh/go-testing-interface v1.0.0 // indirect
@@ -50,7 +53,6 @@ require (
 	github.com/modern-go/reflect2 v1.0.1 // indirect
 	github.com/pelletier/go-toml v1.0.1 // indirect
 	github.com/philhofer/fwd v1.0.0 // indirect
-	github.com/pkg/errors v0.8.0 // indirect
 	github.com/pquerna/ffjson v0.0.0-20181028064349-e517b90714f7 // indirect
 	github.com/prometheus/client_golang v0.9.1 // indirect
 	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910 // indirect
@@ -76,14 +78,11 @@ require (
 	go.uber.org/multierr v1.1.0 // indirect
 	go.uber.org/zap v1.9.1 // indirect
 	golang.org/x/crypto v0.0.0-20181203042331-505ab145d0a9 // indirect
-	golang.org/x/net v0.0.0-20181201002055-351d144fa1fc
-	golang.org/x/sys v0.0.0-20181128092732-4ed8d59d0b35 // indirect
+	golang.org/x/net v0.0.0-20190213061140-3a22650c66bd
 	golang.org/x/time v0.0.0-20181108054448-85acf8d2951c // indirect
 	google.golang.org/appengine v1.3.0 // indirect
 	google.golang.org/genproto v0.0.0-20181202183823-bd91e49a0898 // indirect
 	google.golang.org/grpc v1.18.0
-	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
 	gopkg.in/go-playground/assert.v1 v1.2.1 // indirect
 	gopkg.in/go-playground/validator.v8 v8.18.2 // indirect
-	gopkg.in/vmihailenco/msgpack.v2 v2.9.1 // indirect
 )

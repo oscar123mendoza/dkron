@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"os"
+	"path/filepath"
 
 	"github.com/abronan/leadership"
 	"github.com/abronan/valkeyrie/store"
@@ -19,6 +21,8 @@ import (
 	"github.com/hashicorp/memberlist"
 	"github.com/hashicorp/serf/serf"
 	"github.com/sirupsen/logrus"
+	"github.com/hashicorp/raft"
+	"github.com/markthethomas/raft-badger"
 )
 
 const (
@@ -55,6 +59,14 @@ type Agent struct {
 	sched     *Scheduler
 	candidate *leadership.Candidate
 	ready     bool
+
+	// The raft instance is used among Nomad nodes within the
+	// region to protect operations that require strong consistency
+	leaderCh      <-chan bool
+	raft          *raft.Raft
+	raftStore     *raftbadgerdb.BadgerStore
+	raftInmem     *raft.InmemStore
+	raftTransport *raft.NetworkTransport
 }
 
 // ProcessorFactory is a function type that creates a new instance
@@ -131,6 +143,77 @@ func (a *Agent) Stop() error {
 		return err
 	}
 
+	return nil
+}
+
+func (a *Agent) setupRaft() error {
+	// Create a transport layer
+	addr, err := net.ResolveTCPAddr("tcp", a.config.BindAddr)
+	if err != nil {
+		return err
+	}
+
+	transport, err := raft.NewTCPTransport(a.config.BindAddr, addr, 3, 10*time.Second, os.Stdout)
+	if err != nil {
+		return err
+	}
+	a.raftTransport = transport
+
+	if err := os.MkdirAll("raft.db", 0700); err != nil {
+		return err
+	}
+
+	config := raft.DefaultConfig()
+	
+	// Create the snapshot store. This allows the Raft to truncate the log to
+	// mitigate the issue of having an unbounded replicated log.
+	snapshots, err := raft.NewFileSnapshotStore("raft.db", retainSnapshotCount, os.Stderr)
+	if err != nil {
+		return fmt.Errorf("file snapshot store: %s", err)
+	}
+
+	// Create the log store and stable store. This is the store used to keep
+	// the raft logs.
+	badgerDB, err := raftbadgerdb.NewBadgerStore(filepath.Join("raft.db"))
+	if err != nil {
+		return fmt.Errorf("error creating new badger store: %s", err)
+	}
+	logStore := badgerDB
+	stableStore := badgerDB
+	a.raftStore = badgerDB
+
+	config.LocalID = raft.ServerID(a.config.NodeName)
+	
+	// If we are in bootstrap or dev mode and the state is clean then we can
+	// bootstrap now.
+	if true {
+		hasState, err := raft.HasExistingState(logStore, stableStore, snapshots)
+		if err != nil {
+			return err
+		}
+		if !hasState {
+			configuration := raft.Configuration{
+				Servers: []raft.Server{
+					{
+						ID:      config.LocalID,
+						Address: transport.LocalAddr(),
+					},
+				},
+			}
+			if err := raft.BootstrapCluster(config, logStore, stableStore, snapshots, transport, configuration); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Instantiate the Raft systems. The second parameter is a finite state machine
+	// which stores the actual kv pairs and is operated upon through Apply().
+	rft, err := raft.NewRaft(config, &dkronFSM{}, logStore, stableStore, snapshots, transport)
+	if err != nil {
+		return fmt.Errorf("new raft: %s", err)
+	}
+
+	a.raft = rft
 	return nil
 }
 
@@ -337,6 +420,10 @@ func (a *Agent) StartServer() {
 	}
 	if err := a.GRPCServer.Serve(); err != nil {
 		log.WithError(err).Fatal("agent: RPC server failed to start")
+	}
+
+	if err := a.setupRaft(); err != nil {
+		log.WithError(err).Fatal("agent: Raft layer failed to start")
 	}
 
 	if a.config.Backend != store.BOLTDB {
