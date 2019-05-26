@@ -131,7 +131,9 @@ func (grpcs *GRPCServer) GetJob(ctx context.Context, getJobReq *proto.GetJobRequ
 		return nil, err
 	}
 
-	gjr := &proto.GetJobResponse{}
+	gjr := &proto.GetJobResponse{
+		Job: &proto.Job{},
+	}
 
 	// Copy the data structure
 	gjr.Job.Name = j.Name
