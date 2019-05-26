@@ -21,13 +21,14 @@ import (
 	"github.com/hashicorp/memberlist"
 	"github.com/hashicorp/raft"
 	"github.com/hashicorp/serf/serf"
-	"github.com/markthethomas/raft-badger"
+	raftbadgerdb "github.com/markthethomas/raft-badger"
 	"github.com/sirupsen/logrus"
 )
 
 const (
 	defaultRecoverTime = 10 * time.Second
 	raftTimeout        = 10 * time.Second
+	rescheduleTime     = 2 * time.Second
 )
 
 var (
@@ -212,7 +213,7 @@ func (a *Agent) setupRaft() error {
 	if err != nil {
 		return fmt.Errorf("new raft: %s", err)
 	}
-
+	a.leaderCh = rft.LeaderCh()
 	a.raft = rft
 	return nil
 }
@@ -392,20 +393,8 @@ func (a *Agent) SetConfig(c *Config) {
 
 func (a *Agent) StartServer() {
 	if a.Store == nil {
-		var sConfig = store.Config{}
-		backend := a.config.Backend
-		switch backend {
-		case store.BOLTDB, store.DYNAMODB:
-			sConfig.Bucket = a.config.Keyspace
-		case store.REDIS:
-			sConfig.Password = a.config.BackendPassword
-		case store.CONSUL:
-			sConfig.Token = a.config.BackendPassword
-		}
-		a.Store = NewStore(a.config.Backend, a.config.BackendMachines, a, a.config.Keyspace, &sConfig)
-		if err := a.Store.Healthy(); err != nil {
-			log.WithError(err).Fatal("store: Store backend not reachable")
-		}
+		var sConfig = store.Config{Bucket: a.config.Keyspace}
+		a.Store = NewStore(store.BOLTDB, []string{"./dkron.db"}, a, a.config.Keyspace, &sConfig)
 	}
 
 	a.sched = NewScheduler()
@@ -426,11 +415,13 @@ func (a *Agent) StartServer() {
 		log.WithError(err).Fatal("agent: Raft layer failed to start")
 	}
 
-	if a.config.Backend != store.BOLTDB {
-		a.participate()
-	} else {
-		a.schedule()
-	}
+	go a.monitorLeadership()
+
+	// if a.config.Backend != store.BOLTDB {
+	// 	a.participate()
+	// } else {
+	// 	a.schedule()
+	// }
 }
 
 func (a *Agent) participate() {
@@ -476,11 +467,23 @@ func (a *Agent) runForElection() {
 	}
 }
 
+// SchedulerRestart Dispatch a SchedulerRestartQuery to the cluster but
+// after a timeout to actually throtle subsequent calls
+func (a *Agent) SchedulerRestart() {
+	if rescheduleThrotle == nil {
+		rescheduleThrotle = time.AfterFunc(rescheduleTime, func() {
+			a.schedule()
+		})
+	} else {
+		rescheduleThrotle.Reset(rescheduleTime)
+	}
+}
+
 // Utility method to get leader nodename
 func (a *Agent) leaderMember() (*serf.Member, error) {
-	leaderName := a.Store.GetLeader()
+	l := a.raft.Leader()
 	for _, member := range a.serf.Members() {
-		if member.Name == string(leaderName) {
+		if member.Tags["dkron_rpc_addr"] == string(l) {
 			return &member, nil
 		}
 	}

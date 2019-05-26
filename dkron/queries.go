@@ -14,8 +14,6 @@ const (
 	QuerySchedulerRestart = "scheduler:restart"
 	QueryRunJob           = "run:job"
 	QueryExecutionDone    = "execution:done"
-
-	rescheduleTime = 2 * time.Second
 )
 
 var rescheduleThrotle *time.Timer
@@ -129,62 +127,6 @@ func (a *Agent) RunQuery(ex *Execution) {
 	log.WithFields(logrus.Fields{
 		"query": QueryRunJob,
 	}).Debug("agent: Done receiving acks and responses")
-}
-
-// SchedulerRestart Dispatch a SchedulerRestartQuery to the cluster but
-// after a timeout to actually throtle subsequent calls
-func (a *Agent) SchedulerRestart() {
-	if rescheduleThrotle == nil {
-		rescheduleThrotle = time.AfterFunc(rescheduleTime, func() {
-			// In case we are using BoltDB we just need to reschedule because
-			// there is no leader nor other nodes.
-			// In case of using any other engine send the scheduler restart query.
-			if a.config.Backend == store.BOLTDB {
-				a.schedule()
-			} else {
-				a.schedulerRestartQuery(string(a.Store.GetLeader()))
-			}
-		})
-	} else {
-		rescheduleThrotle.Reset(rescheduleTime)
-	}
-}
-
-// Broadcast a SchedulerRestartQuery to the cluster, only server members
-// will attend to this. Forces a scheduler restart and reload all jobs.
-func (a *Agent) schedulerRestartQuery(leaderName string) {
-	params := &serf.QueryParam{
-		FilterNodes: []string{leaderName},
-		RequestAck:  true,
-	}
-
-	qr, err := a.serf.Query(QuerySchedulerRestart, []byte(""), params)
-	if err != nil {
-		log.WithError(err).Fatal("agent: Error sending the scheduler reload query")
-	}
-	defer qr.Close()
-
-	ackCh := qr.AckCh()
-	respCh := qr.ResponseCh()
-
-	for !qr.Finished() {
-		select {
-		case ack, ok := <-ackCh:
-			if ok {
-				log.WithFields(logrus.Fields{
-					"from": ack,
-				}).Debug("agent: Received ack")
-			}
-		case resp, ok := <-respCh:
-			if ok {
-				log.WithFields(logrus.Fields{
-					"from":    resp.From,
-					"payload": string(resp.Payload),
-				}).Debug("agent: Received response")
-			}
-		}
-	}
-	log.WithField("query", QuerySchedulerRestart).Debug("agent: Done receiving acks and responses")
 }
 
 // Broadcast a ExecutionDone to the cluster.

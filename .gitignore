@@ -15,8 +15,8 @@ main
 *.log
 config/
 dist
-dkron.db
 static/node_modules
+*.db
 
 .DS_Store
 .vscode

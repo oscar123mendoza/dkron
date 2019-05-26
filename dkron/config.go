@@ -7,8 +7,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/abronan/valkeyrie/store"
-
 	flag "github.com/spf13/pflag"
 )
 
@@ -17,9 +15,6 @@ type Config struct {
 	NodeName              string `mapstructure:"node-name"`
 	BindAddr              string `mapstructure:"bind-addr"`
 	HTTPAddr              string `mapstructure:"http-addr"`
-	Backend               store.Backend
-	BackendMachines       []string `mapstructure:"backend-machine"`
-	BackendPassword       string   `mapstructure:"backend-password"`
 	Profile               string
 	Interface             string
 	AdvertiseAddr         string            `mapstructure:"advertise-addr"`
@@ -75,9 +70,6 @@ func DefaultConfig() *Config {
 		NodeName:          hostname,
 		BindAddr:          fmt.Sprintf("0.0.0.0:%d", DefaultBindPort),
 		HTTPAddr:          ":8080",
-		Backend:           "boltdb",
-		BackendMachines:   []string{"./dkron.db"},
-		BackendPassword:   "",
 		Profile:           "lan",
 		Keyspace:          "dkron",
 		LogLevel:          "info",
@@ -97,9 +89,6 @@ func ConfigFlagSet() *flag.FlagSet {
 	cmdFlags.String("bind-addr", c.BindAddr, "Address to bind network listeners to")
 	cmdFlags.String("advertise-addr", "", "Address used to advertise to other nodes in the cluster. By default, the bind address is advertised")
 	cmdFlags.String("http-addr", c.HTTPAddr, "Address to bind the UI web server to. Only used when server")
-	cmdFlags.String("backend", string(c.Backend), "Store backend (etcd|etcdv3|consul|zk|redis|boltdb|dynamodb)")
-	cmdFlags.StringSlice("backend-machine", c.BackendMachines, "Store backend machines addresses")
-	cmdFlags.String("backend-password", c.BackendPassword, "Store backend machines password or token, only REDIS/CONSUL")
 	cmdFlags.String("profile", c.Profile, "Profile is used to control the timing profiles used")
 	cmdFlags.StringSlice("join", []string{}, "An initial agent to join with. This flag can be specified multiple times")
 	cmdFlags.StringSlice("tag", []string{}, "Tag can be specified multiple times to attach multiple key/value tag pairs to the given node, specified as key=value")
