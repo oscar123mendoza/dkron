@@ -7,26 +7,27 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"os"
-	"path/filepath"
 
 	"github.com/abronan/leadership"
 	"github.com/abronan/valkeyrie/store"
 	metrics "github.com/armon/go-metrics"
 	"github.com/hashicorp/memberlist"
-	"github.com/hashicorp/serf/serf"
-	"github.com/sirupsen/logrus"
 	"github.com/hashicorp/raft"
+	"github.com/hashicorp/serf/serf"
 	"github.com/markthethomas/raft-badger"
+	"github.com/sirupsen/logrus"
 )
 
 const (
 	defaultRecoverTime = 10 * time.Second
+	raftTimeout        = 10 * time.Second
 )
 
 var (
@@ -109,7 +110,7 @@ func (a *Agent) Start() error {
 	}
 
 	if a.GRPCClient == nil {
-		a.GRPCClient = NewGRPCClient(nil)
+		a.GRPCClient = NewGRPCClient(nil, a)
 	}
 
 	if err := a.SetTags(a.config.Tags); err != nil {
@@ -148,15 +149,13 @@ func (a *Agent) Stop() error {
 
 func (a *Agent) setupRaft() error {
 	// Create a transport layer
-	addr, err := net.ResolveTCPAddr("tcp", a.serf.LocalMember().Addr.String() + ":8947")
+	addr, err := net.ResolveTCPAddr("tcp", a.serf.LocalMember().Addr.String()+":6868")
 	if err != nil {
 		return err
 	}
-	
-	transport, err := raft.NewTCPTransport(addr.String(), addr, 3, 10*time.Second, os.Stdout)
-	if err != nil {
-		return err
-	}
+
+	rl := NewRaftLayer(addr)
+	transport := raft.NewNetworkTransport(rl, 3, raftTimeout, os.Stdout) //raft.NewTCPTransport(addr.String(), addr, 3, 10*time.Second, os.Stdout)
 	a.raftTransport = transport
 
 	if err := os.MkdirAll("raft.db", 0700); err != nil {
@@ -164,10 +163,10 @@ func (a *Agent) setupRaft() error {
 	}
 
 	config := raft.DefaultConfig()
-	
+
 	// Create the snapshot store. This allows the Raft to truncate the log to
 	// mitigate the issue of having an unbounded replicated log.
-	snapshots, err := raft.NewFileSnapshotStore("raft.db", retainSnapshotCount, os.Stderr)
+	snapshots, err := raft.NewFileSnapshotStore("raft.db", 3, os.Stderr)
 	if err != nil {
 		return fmt.Errorf("file snapshot store: %s", err)
 	}
@@ -183,7 +182,7 @@ func (a *Agent) setupRaft() error {
 	a.raftStore = badgerDB
 
 	config.LocalID = raft.ServerID(a.config.NodeName)
-	
+
 	// If we are in bootstrap or dev mode and the state is clean then we can
 	// bootstrap now.
 	if true {
@@ -208,7 +207,8 @@ func (a *Agent) setupRaft() error {
 
 	// Instantiate the Raft systems. The second parameter is a finite state machine
 	// which stores the actual kv pairs and is operated upon through Apply().
-	rft, err := raft.NewRaft(config, &dkronFSM{}, logStore, stableStore, snapshots, transport)
+	fsm := NewFSM(a.Store)
+	rft, err := raft.NewRaft(config, fsm, logStore, stableStore, snapshots, transport)
 	if err != nil {
 		return fmt.Errorf("new raft: %s", err)
 	}
@@ -519,7 +519,6 @@ func (a *Agent) GetPeers() (peers []string) {
 	for _, m := range s {
 		if addr, ok := m.Tags["dkron_rpc_addr"]; ok {
 			peers = append(peers, addr)
-			log.WithField("peer", addr).Debug("agent: updated peer")
 		}
 	}
 

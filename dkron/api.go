@@ -161,13 +161,11 @@ func (h *HTTPTransport) jobCreateOrUpdateHandler(c *gin.Context) {
 		return
 	}
 
-	// Save the job to the store
-	if err := h.agent.Store.SetJob(&job, true); err != nil {
+	// Call gRPC SetJob
+	if err := h.agent.GRPCClient.CallSetJob(&job); err != nil {
 		c.AbortWithError(422, err)
 		return
 	}
-
-	h.agent.SchedulerRestart()
 
 	c.Header("Location", fmt.Sprintf("%s/%s", c.Request.RequestURI, job.Name))
 	renderJSON(c, http.StatusCreated, &job)
@@ -176,13 +174,12 @@ func (h *HTTPTransport) jobCreateOrUpdateHandler(c *gin.Context) {
 func (h *HTTPTransport) jobDeleteHandler(c *gin.Context) {
 	jobName := c.Param("job")
 
-	job, err := h.agent.Store.DeleteJob(jobName)
+	// Call gRPC DeleteJob
+	job, err := h.agent.GRPCClient.CallDeleteJob(jobName)
 	if err != nil {
 		c.AbortWithError(http.StatusNotFound, err)
 		return
 	}
-
-	h.agent.SchedulerRestart()
 	renderJSON(c, http.StatusOK, job)
 }
 

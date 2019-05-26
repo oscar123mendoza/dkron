@@ -5,30 +5,72 @@ import (
 	"io"
 	"sync"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/hashicorp/raft"
+	dkronpb "github.com/victorcoder/dkron/proto"
+)
+
+type MessageType uint8
+
+const (
+	SetJobType MessageType = iota
+	DeleteJobType
+	SetExecutionType
+	DeleteExecutionsType
 )
 
 type dkronFSM struct {
-	mu sync.Mutex
+	store Storage
+	mu    sync.Mutex
+}
+
+// NewFSMPath is used to construct a new FSM with a blank state
+func NewFSM(store Storage) *dkronFSM {
+	return &dkronFSM{
+		store: store,
+	}
 }
 
 // Apply applies a Raft log entry to the key-value store.
-func (f *dkronFSM) Apply(l *raft.Log) interface{} {
-	return "noop"
-}
+func (d *dkronFSM) Apply(l *raft.Log) interface{} {
+	buf := l.Data
+	msgType := MessageType(buf[0])
 
-func (f *dkronFSM) applySet(key, value string) interface{} {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	//f.kvs.Set([]byte(key), []byte(value))
+	log.WithField("command", msgType).Debug("fsm: received command")
+
+	switch msgType {
+	case SetJobType:
+		return d.applySetJob(buf[1:])
+	case DeleteJobType:
+		return d.applyDeleteJob(buf[1:])
+	}
+
 	return nil
 }
 
-func (f *dkronFSM) applyDelete(key string) interface{} {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	//f.kvs.Delete([]byte(key))
+func (d *dkronFSM) applySetJob(buf []byte) interface{} {
+	var pj dkronpb.Job
+	if err := proto.Unmarshal(buf, &pj); err != nil {
+		return err
+	}
+	job := NewJobFromProto(&pj)
+	log.WithField("job", buf).Debug("fsm: storing job")
+	if err := d.store.SetJob(job, false); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (d *dkronFSM) applyDeleteJob(buf []byte) interface{} {
+	var djr dkronpb.DeleteJobRequest
+	if err := proto.Unmarshal(buf, &djr); err != nil {
+		return err
+	}
+	job, err := d.store.DeleteJob(djr.GetJobName())
+	if err != nil {
+		return err
+	}
+	return job
 }
 
 // Snapshot returns a snapshot of the key-value store. We wrap

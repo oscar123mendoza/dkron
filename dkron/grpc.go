@@ -1,6 +1,7 @@
 package dkron
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/abronan/valkeyrie/store"
 	metrics "github.com/armon/go-metrics"
+	pb "github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/sirupsen/logrus"
 	"github.com/victorcoder/dkron/proto"
@@ -58,6 +60,66 @@ func (grpcs *GRPCServer) Serve() error {
 	return nil
 }
 
+// Encode is used to encode a Protoc object with type prefix
+func Encode(t MessageType, msg interface{}) ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte(uint8(t))
+	m, err := pb.Marshal(msg.(pb.Message))
+	if err != nil {
+		return nil, err
+	}
+	_, err = buf.Write(m)
+	return buf.Bytes(), err
+}
+
+// SetJob broadcast a state change to the cluster members that will store the job.
+// Then restart the scheduler
+// This only works on the leader
+func (grpcs *GRPCServer) SetJob(ctx context.Context, setJobReq *proto.SetJobRequest) (*proto.SetJobResponse, error) {
+	defer metrics.MeasureSince([]string{"grpc", "set_job"}, time.Now())
+	log.WithFields(logrus.Fields{
+		"job": setJobReq.Job.Name,
+	}).Debug("grpc: Received SetJob")
+
+	cmd, err := Encode(SetJobType, setJobReq.Job)
+	if err != nil {
+		return nil, err
+	}
+	af := grpcs.agent.raft.Apply(cmd, raftTimeout)
+	if err := af.Error(); err != nil {
+		return nil, err
+	}
+
+	// If everything is ok, restart the scheduler
+	grpcs.agent.SchedulerRestart()
+
+	return &proto.SetJobResponse{}, nil
+}
+
+// DeleteJob broadcast a state change to the cluster members that will delete the job.
+// Then restart the scheduler
+// This only works on the leader
+func (grpcs *GRPCServer) DeleteJob(ctx context.Context, delJobReq *proto.DeleteJobRequest) (*proto.DeleteJobResponse, error) {
+	defer metrics.MeasureSince([]string{"grpc", "delete_job"}, time.Now())
+	log.WithFields(logrus.Fields{
+		"job": delJobReq.GetJobName(),
+	}).Debug("grpc: Received DeleteJob")
+
+	cmd, err := Encode(DeleteJobType, delJobReq)
+	if err != nil {
+		return nil, err
+	}
+	af := grpcs.agent.raft.Apply(cmd, raftTimeout)
+	if err := af.Error(); err != nil {
+		return nil, err
+	}
+	res := af.Response()
+	job := res.(*Job)
+	jpb := job.ToProto()
+
+	return &proto.DeleteJobResponse{Job: jpb}, nil
+}
+
 func (grpcs *GRPCServer) GetJob(ctx context.Context, getJobReq *proto.GetJobRequest) (*proto.GetJobResponse, error) {
 	defer metrics.MeasureSince([]string{"grpc", "get_job"}, time.Now())
 	log.WithFields(logrus.Fields{
@@ -72,9 +134,9 @@ func (grpcs *GRPCServer) GetJob(ctx context.Context, getJobReq *proto.GetJobRequ
 	gjr := &proto.GetJobResponse{}
 
 	// Copy the data structure
-	gjr.Name = j.Name
-	gjr.Executor = j.Executor
-	gjr.ExecutorConfig = j.ExecutorConfig
+	gjr.Job.Name = j.Name
+	gjr.Job.Executor = j.Executor
+	gjr.Job.ExecutorConfig = j.ExecutorConfig
 
 	return gjr, nil
 }
@@ -199,22 +261,27 @@ type DkronGRPCClient interface {
 	Connect(string) (*grpc.ClientConn, error)
 	CallExecutionDone(string, *Execution) error
 	CallGetJob(string, string) (*Job, error)
+	CallSetJob(*Job) error
+	CallDeleteJob(string) (*Job, error)
 	Leave(string) error
 }
 
 type GRPCClient struct {
 	dialOpt []grpc.DialOption
+	agent   *Agent
 }
 
-func NewGRPCClient(dialOpt grpc.DialOption) DkronGRPCClient {
+func NewGRPCClient(dialOpt grpc.DialOption, agent *Agent) DkronGRPCClient {
 	if dialOpt == nil {
 		dialOpt = grpc.WithInsecure()
 	}
-	return &GRPCClient{dialOpt: []grpc.DialOption{
-		dialOpt,
-		grpc.WithBlock(),
-		grpc.WithTimeout(5 * time.Second),
-	},
+	return &GRPCClient{
+		dialOpt: []grpc.DialOption{
+			dialOpt,
+			grpc.WithBlock(),
+			grpc.WithTimeout(5 * time.Second),
+		},
+		agent: agent,
 	}
 }
 
@@ -277,7 +344,7 @@ func (grpcc *GRPCClient) CallGetJob(addr, jobName string) (*Job, error) {
 		return nil, err
 	}
 
-	return NewJobFromProto(gjr), nil
+	return NewJobFromProto(gjr.Job), nil
 }
 
 func (grpcc *GRPCClient) Leave(addr string) error {
@@ -305,4 +372,69 @@ func (grpcc *GRPCClient) Leave(addr string) error {
 	}
 
 	return nil
+}
+
+// CallSetJob calls the leader passing the job
+func (grpcc *GRPCClient) CallSetJob(job *Job) error {
+	var conn *grpc.ClientConn
+
+	addr := grpcc.agent.raft.Leader()
+	//host, _, _ := net.SplitHostPort(string(addr))
+	// get rpc address of the leader
+
+	// Initiate a connection with the server
+	conn, err := grpcc.Connect(string(addr))
+	if err != nil {
+		log.WithFields(logrus.Fields{
+			"err":         err,
+			"server_addr": addr,
+		}).Error("grpc: error dialing.")
+		return err
+	}
+	defer conn.Close()
+
+	// Synchronous call
+	d := proto.NewDkronClient(conn)
+	_, err = d.SetJob(context.Background(), &proto.SetJobRequest{
+		Job: job.ToProto(),
+	})
+	if err != nil {
+		log.WithFields(logrus.Fields{
+			"error": err,
+		}).Warning("grpc: Error calling SetJob")
+		return err
+	}
+	return nil
+}
+
+// CallDeleteJob calls the leader passing the job name
+func (grpcc *GRPCClient) CallDeleteJob(jobName string) (*Job, error) {
+	var conn *grpc.ClientConn
+
+	addr := grpcc.agent.raft.Leader()
+
+	// Initiate a connection with the server
+	conn, err := grpcc.Connect(string(addr))
+	if err != nil {
+		log.WithFields(logrus.Fields{
+			"err":         err,
+			"server_addr": addr,
+		}).Error("grpc: error dialing.")
+		return nil, err
+	}
+	defer conn.Close()
+
+	// Synchronous call
+	d := proto.NewDkronClient(conn)
+	res, err := d.DeleteJob(context.Background(), &proto.DeleteJobRequest{
+		JobName: jobName,
+	})
+	job := NewJobFromProto(res.Job)
+	if err != nil {
+		log.WithFields(logrus.Fields{
+			"error": err,
+		}).Warning("grpc: Error calling SetJob")
+		return nil, err
+	}
+	return job, nil
 }

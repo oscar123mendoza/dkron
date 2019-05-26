@@ -115,7 +115,7 @@ type Job struct {
 	Next time.Time `json:"next"`
 }
 
-func NewJobFromProto(in *proto.GetJobResponse) *Job {
+func NewJobFromProto(in *proto.Job) *Job {
 	return &Job{
 		Name:           in.Name,
 		Timezone:       in.Timezone,
@@ -133,6 +133,28 @@ func NewJobFromProto(in *proto.GetJobResponse) *Job {
 		Executor:       in.Executor,
 		ExecutorConfig: in.ExecutorConfig,
 		Status:         in.Status,
+	}
+}
+
+// ToProto return the corresponding proto type
+func (j *Job) ToProto() *proto.Job {
+	return &proto.Job{
+		Name:           j.Name,
+		Timezone:       j.Timezone,
+		Schedule:       j.Schedule,
+		Owner:          j.Owner,
+		OwnerEmail:     j.OwnerEmail,
+		SuccessCount:   int32(j.SuccessCount),
+		ErrorCount:     int32(j.ErrorCount),
+		Disabled:       j.Disabled,
+		Tags:           j.Tags,
+		Retries:        uint32(j.Retries),
+		DependentJobs:  j.DependentJobs,
+		ParentJob:      j.ParentJob,
+		Concurrency:    j.Concurrency,
+		Executor:       j.Executor,
+		ExecutorConfig: j.ExecutorConfig,
+		Status:         j.Status,
 	}
 }
 
