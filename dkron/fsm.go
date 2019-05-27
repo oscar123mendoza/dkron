@@ -5,6 +5,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/abronan/valkeyrie/store"
 	"github.com/golang/protobuf/proto"
 	"github.com/hashicorp/raft"
 	dkronpb "github.com/victorcoder/dkron/proto"
@@ -17,6 +18,7 @@ const (
 	DeleteJobType
 	SetExecutionType
 	DeleteExecutionsType
+	ExecutionDoneType
 )
 
 type dkronFSM struct {
@@ -43,6 +45,10 @@ func (d *dkronFSM) Apply(l *raft.Log) interface{} {
 		return d.applySetJob(buf[1:])
 	case DeleteJobType:
 		return d.applyDeleteJob(buf[1:])
+	case ExecutionDoneType:
+		return d.applyExecutionDone(buf[1:])
+	case SetExecutionType:
+		return d.applySetExecution(buf[1:])
 	}
 
 	return nil
@@ -54,7 +60,6 @@ func (d *dkronFSM) applySetJob(buf []byte) interface{} {
 		return err
 	}
 	job := NewJobFromProto(&pj)
-	log.WithField("job", buf).Debug("fsm: storing job")
 	if err := d.store.SetJob(job, false); err != nil {
 		return err
 	}
@@ -71,6 +76,65 @@ func (d *dkronFSM) applyDeleteJob(buf []byte) interface{} {
 		return err
 	}
 	return job
+}
+
+func (d *dkronFSM) applyExecutionDone(buf []byte) interface{} {
+	var execDoneReq dkronpb.ExecutionDoneRequest
+	if err := proto.Unmarshal(buf, &execDoneReq); err != nil {
+		return err
+	}
+	execution := NewExecutionFromProto(execDoneReq.Execution)
+
+Retry:
+	// Load the job from the store
+	job, jkv, err := d.store.GetJobWithKVPair(execDoneReq.Execution.JobName, &JobOptions{
+		ComputeStatus: true,
+	})
+	if err != nil {
+		if err == store.ErrKeyNotFound {
+			log.Warning(ErrExecutionDoneForDeletedJob)
+			return ErrExecutionDoneForDeletedJob
+		}
+		log.Fatal("fsm:", err)
+		return err
+	}
+
+	// Save the execution to store
+	if _, err := d.store.SetExecution(execution); err != nil {
+		return err
+	}
+
+	if execution.Success {
+		job.LastSuccess = execution.FinishedAt
+		job.SuccessCount++
+	} else {
+		job.LastError = execution.FinishedAt
+		job.ErrorCount++
+	}
+
+	ok, err := d.store.AtomicJobPut(job, jkv)
+	if err != nil && err != store.ErrKeyModified {
+		log.WithError(err).Fatal("fsm: Error in atomic job save")
+	}
+	if !ok {
+		log.Debug("fsm: Retrying job update")
+		goto Retry
+	}
+
+	return nil
+}
+
+func (d *dkronFSM) applySetExecution(buf []byte) interface{} {
+	var pbex dkronpb.Execution
+	if err := proto.Unmarshal(buf, &pbex); err != nil {
+		return err
+	}
+	execution := NewExecutionFromProto(&pbex)
+	key, err := d.store.SetExecution(execution)
+	if err != nil {
+		return err
+	}
+	return key
 }
 
 // Snapshot returns a snapshot of the key-value store. We wrap

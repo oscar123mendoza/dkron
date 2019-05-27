@@ -29,6 +29,9 @@ const (
 	defaultRecoverTime = 10 * time.Second
 	raftTimeout        = 10 * time.Second
 	rescheduleTime     = 2 * time.Second
+	// raftLogCacheSize is the maximum number of logs to cache in-memory.
+	// This is used to reduce disk I/O for the recently committed entries.
+	raftLogCacheSize = 512
 )
 
 var (
@@ -182,6 +185,13 @@ func (a *Agent) setupRaft() error {
 	stableStore := badgerDB
 	a.raftStore = badgerDB
 
+	// Wrap the store in a LogCache to improve performance
+	cacheStore, err := raft.NewLogCache(raftLogCacheSize, stableStore)
+	if err != nil {
+		stableStore.Close()
+		return err
+	}
+
 	config.LocalID = raft.ServerID(a.config.NodeName)
 
 	// If we are in bootstrap or dev mode and the state is clean then we can
@@ -200,7 +210,7 @@ func (a *Agent) setupRaft() error {
 					},
 				},
 			}
-			if err := raft.BootstrapCluster(config, logStore, stableStore, snapshots, transport, configuration); err != nil {
+			if err := raft.BootstrapCluster(config, cacheStore, stableStore, snapshots, transport, configuration); err != nil {
 				return err
 			}
 		}
@@ -209,7 +219,7 @@ func (a *Agent) setupRaft() error {
 	// Instantiate the Raft systems. The second parameter is a finite state machine
 	// which stores the actual kv pairs and is operated upon through Apply().
 	fsm := NewFSM(a.Store)
-	rft, err := raft.NewRaft(config, fsm, logStore, stableStore, snapshots, transport)
+	rft, err := raft.NewRaft(config, fsm, cacheStore, stableStore, snapshots, transport)
 	if err != nil {
 		return fmt.Errorf("new raft: %s", err)
 	}
@@ -713,9 +723,15 @@ func (a *Agent) setExecution(payload []byte) *Execution {
 		log.Fatal(err)
 	}
 
-	// Save the new execution to store
-	if _, err := a.Store.SetExecution(&ex); err != nil {
-		log.Fatal(err)
+	cmd, err := Encode(SetExecutionType, ex.ToProto())
+	if err != nil {
+		log.WithError(err).Fatal("agent: encode error in setExecution")
+		return nil
+	}
+	af := a.raft.Apply(cmd, raftTimeout)
+	if err := af.Error(); err != nil {
+		log.WithError(err).Fatal("agent: error applying SetExecutionType")
+		return nil
 	}
 
 	return &ex
@@ -776,12 +792,15 @@ func (a *Agent) RefreshJobStatus(jobName string) {
 				done, _ := strconv.ParseBool(s)
 				if done {
 					ex.FinishedAt = time.Now()
-					a.Store.SetExecution(ex)
 				}
 			} else {
 				ex.FinishedAt = time.Now()
-				a.Store.SetExecution(ex)
 			}
+			ej, err := json.Marshal(ex)
+			if err != nil {
+				log.WithError(err).Error("agent: Error marshaling execution")
+			}
+			a.setExecution(ej)
 		}
 	}
 }

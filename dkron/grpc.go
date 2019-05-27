@@ -7,7 +7,6 @@ import (
 	"net"
 	"time"
 
-	"github.com/abronan/valkeyrie/store"
 	metrics "github.com/armon/go-metrics"
 	pb "github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes/empty"
@@ -143,74 +142,51 @@ func (grpcs *GRPCServer) GetJob(ctx context.Context, getJobReq *proto.GetJobRequ
 	return gjr, nil
 }
 
+// ExecutionDone saves the execution to the store
 func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.ExecutionDoneRequest) (*proto.ExecutionDoneResponse, error) {
+
 	defer metrics.MeasureSince([]string{"grpc", "execution_done"}, time.Now())
 	log.WithFields(logrus.Fields{
-		"group": execDoneReq.Group,
-		"job":   execDoneReq.JobName,
-		"from":  execDoneReq.NodeName,
+		"group": execDoneReq.Execution.Group,
+		"job":   execDoneReq.Execution.JobName,
+		"from":  execDoneReq.Execution.NodeName,
 	}).Debug("grpc: Received execution done")
 
-	var execution Execution
-	processed := false
+	// Get the leader address and compare with the current node address.
+	// Forward the request to the leader in case current node is not the leader.
+	addr := grpcs.agent.raft.Leader()
+	if string(addr) != grpcs.agent.getRPCAddr() {
+		grpcs.agent.GRPCClient.CallExecutionDone(string(addr), NewExecutionFromProto(execDoneReq.Execution))
+	}
 
-retry:
-	// Load the job from the store
-	job, jkv, err := grpcs.agent.Store.GetJobWithKVPair(execDoneReq.JobName, &JobOptions{
-		ComputeStatus: true,
-	})
-	if err != nil {
-		if err == store.ErrKeyNotFound {
-			log.Warning(ErrExecutionDoneForDeletedJob)
-			return nil, ErrExecutionDoneForDeletedJob
+	// This is the leader at this point, so process the execution, encode the value and apply the log to the cluster.
+	// Get the defined output types for the job, and call them
+	job, err := grpcs.agent.Store.GetJob(execDoneReq.Execution.JobName, nil)
+	origExec := *NewExecutionFromProto(execDoneReq.Execution)
+	execution := origExec
+	for k, v := range job.Processors {
+		log.WithField("plugin", k).Info("grpc: Processing execution with plugin")
+		if processor, ok := grpcs.agent.ProcessorPlugins[k]; ok {
+			v["reporting_node"] = grpcs.agent.config.NodeName
+			e := processor.Process(&ExecutionProcessorArgs{Execution: origExec, Config: v})
+			execution = e
+		} else {
+			log.WithField("plugin", k).Error("grpc: Specified plugin not found")
 		}
-		log.Fatal("grpc:", err)
+	}
+
+	execDoneReq.Execution = execution.ToProto()
+	cmd, err := Encode(ExecutionDoneType, execDoneReq)
+	if err != nil {
+		return nil, err
+	}
+	af := grpcs.agent.raft.Apply(cmd, raftTimeout)
+	if err := af.Error(); err != nil {
 		return nil, err
 	}
 
-	if !processed {
-		// Get the defined output types for the job, and call them
-		origExec := *NewExecutionFromProto(execDoneReq)
-		execution = origExec
-		for k, v := range job.Processors {
-			log.WithField("plugin", k).Info("grpc: Processing execution with plugin")
-			if processor, ok := grpcs.agent.ProcessorPlugins[k]; ok {
-				v["reporting_node"] = grpcs.agent.config.NodeName
-				e := processor.Process(&ExecutionProcessorArgs{Execution: origExec, Config: v})
-				execution = e
-			} else {
-				log.WithField("plugin", k).Error("grpc: Specified plugin not found")
-			}
-		}
-
-		// Save the execution to store
-		if _, err := grpcs.agent.Store.SetExecution(&execution); err != nil {
-			return nil, err
-		}
-
-		processed = true
-	}
-
-	if execution.Success {
-		job.LastSuccess = execution.FinishedAt
-		job.SuccessCount++
-	} else {
-		job.LastError = execution.FinishedAt
-		job.ErrorCount++
-	}
-
-	ok, err := grpcs.agent.Store.AtomicJobPut(job, jkv)
-	if err != nil && err != store.ErrKeyModified {
-		log.WithError(err).Fatal("grpc: Error in atomic job save")
-	}
-	if !ok {
-		log.Debug("grpc: Retrying job update")
-		goto retry
-	}
-
-	execDoneResp := &proto.ExecutionDoneResponse{
-		From:    grpcs.agent.config.NodeName,
-		Payload: []byte("saved"),
+	if err := af.Error(); err != nil {
+		return nil, err
 	}
 
 	// If the execution failed, retry it until retries limit (default: don't retry)
@@ -252,7 +228,10 @@ retry:
 		}
 	}
 
-	return execDoneResp, nil
+	return &proto.ExecutionDoneResponse{
+		From:    grpcs.agent.config.NodeName,
+		Payload: []byte("saved"),
+	}, nil
 }
 
 func (grpcs *GRPCServer) Leave(ctx context.Context, in *empty.Empty) (*empty.Empty, error) {

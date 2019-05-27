@@ -49,8 +49,8 @@ message GetJobResponse {
   Job job = 1;
 }
 
-message ExecutionDoneRequest {
-	string job_name = 1;
+message Execution {
+  string job_name = 1;
 	bool success = 2;
 	bytes output = 3;
 	string node_name = 4;
@@ -60,20 +60,23 @@ message ExecutionDoneRequest {
   google.protobuf.Timestamp finished_at = 8;
 }
 
+message ExecutionDoneRequest {
+  Execution execution = 1;
+}
+
 message ExecutionDoneResponse {
   string from = 1;
   bytes payload = 2;
 }
 
 message Executions {
-  repeated ExecutionDoneRequest executions = 1;
+  repeated Execution executions = 1;
 }
 
 service Dkron {
   rpc GetJob (GetJobRequest) returns (GetJobResponse);
   rpc ExecutionDone (ExecutionDoneRequest) returns (ExecutionDoneResponse);
   rpc Leave (google.protobuf.Empty) returns (google.protobuf.Empty);
-
   rpc SetJob (SetJobRequest) returns (SetJobResponse);
 	rpc DeleteJob (DeleteJobRequest) returns (DeleteJobResponse);
 }

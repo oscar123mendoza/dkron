@@ -53,7 +53,7 @@ func (grpcc *GRPCClient) CallExecutionDone(addr string, execution *Execution) er
 	defer conn.Close()
 
 	d := proto.NewDkronClient(conn)
-	edr, err := d.ExecutionDone(context.Background(), execution.ToProto())
+	edr, err := d.ExecutionDone(context.Background(), &proto.ExecutionDoneRequest{Execution: execution.ToProto()})
 	if err != nil {
 		log.WithFields(logrus.Fields{
 			"error": err,
@@ -124,8 +124,6 @@ func (grpcc *GRPCClient) CallSetJob(job *Job) error {
 	var conn *grpc.ClientConn
 
 	addr := grpcc.agent.raft.Leader()
-	//host, _, _ := net.SplitHostPort(string(addr))
-	// get rpc address of the leader
 
 	// Initiate a connection with the server
 	conn, err := grpcc.Connect(string(addr))

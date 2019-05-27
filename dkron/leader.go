@@ -2,6 +2,10 @@ package dkron
 
 import (
 	"sync"
+	"time"
+
+	metrics "github.com/armon/go-metrics"
+	"github.com/hashicorp/serf/serf"
 )
 
 // monitorLeadership is used to monitor if we acquire or lose our role
@@ -47,4 +51,27 @@ func (a *Agent) monitorLeadership() {
 			//	return
 		}
 	}
+}
+
+// reconcileMember is used to do an async reconcile of a single serf member
+func (s *Server) reconcileMember(member serf.Member) error {
+	// Check if this is a member we should handle
+	valid, parts := isNomadServer(member)
+	if !valid || parts.Region != s.config.Region {
+		return nil
+	}
+	defer metrics.MeasureSince([]string{"dkron", "leader", "reconcileMember"}, time.Now())
+
+	var err error
+	switch member.Status {
+	case serf.StatusAlive:
+		err = s.addRaftPeer(member, parts)
+	case serf.StatusLeft, StatusReap:
+		err = s.removeRaftPeer(member, parts)
+	}
+	if err != nil {
+		s.logger.Error("failed to reconcile member", "member", member, "error", err)
+		return err
+	}
+	return nil
 }
