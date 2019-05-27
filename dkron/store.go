@@ -6,46 +6,19 @@ import (
 	"sort"
 	"time"
 
-	"github.com/abronan/valkeyrie"
 	"github.com/abronan/valkeyrie/store"
-	"github.com/abronan/valkeyrie/store/boltdb"
-	"github.com/abronan/valkeyrie/store/consul"
-	"github.com/abronan/valkeyrie/store/dynamodb"
-	"github.com/abronan/valkeyrie/store/etcd/v2"
-	etcdv3 "github.com/abronan/valkeyrie/store/etcd/v3"
-	"github.com/abronan/valkeyrie/store/redis"
-	"github.com/abronan/valkeyrie/store/zookeeper"
+	"github.com/dgraph-io/badger"
+	"github.com/golang/protobuf/proto"
 	"github.com/sirupsen/logrus"
 	"github.com/victorcoder/dkron/cron"
+	dkronpb "github.com/victorcoder/dkron/proto"
 )
 
 const MaxExecutions = 100
 
-type Storage interface {
-	SetJob(job *Job, copyDependentJobs bool) error
-	AtomicJobPut(job *Job, prevJobKVPair *store.KVPair) (bool, error)
-	DeleteJob(name string) (*Job, error)
-	SetExecution(execution *Execution) (string, error)
-	DeleteExecutions(jobName string) error
-
-	GetJobs(options *JobOptions) ([]*Job, error)
-	GetJob(name string, options *JobOptions) (*Job, error)
-	GetJobWithKVPair(name string, options *JobOptions) (*Job, *store.KVPair, error)
-	GetExecutions(jobName string) ([]*Execution, error)
-	GetLastExecutionGroup(jobName string) ([]*Execution, error)
-	GetExecutionGroup(execution *Execution) ([]*Execution, error)
-	GetGroupedExecutions(jobName string) (map[int64][]*Execution, []int64, error)
-	GetLeader() []byte
-	LeaderKey() string
-	Healthy() error
-	Client() store.Store
-}
-
 type Store struct {
-	client   store.Store
-	agent    *Agent
-	keyspace string
-	backend  store.Backend
+	agent *Agent
+	db    *badger.DB
 }
 
 type JobOptions struct {
@@ -53,41 +26,20 @@ type JobOptions struct {
 	Tags          map[string]string `json:"tags"`
 }
 
-func init() {
-	etcd.Register()
-	etcdv3.Register()
-	consul.Register()
-	zookeeper.Register()
-	redis.Register()
-	boltdb.Register()
-	dynamodb.Register()
-}
+func NewStore(a *Agent, dir string) (*Store, error) {
+	opts := badger.DefaultOptions
+	opts.Dir = dir
+	opts.ValueDir = dir
 
-func NewStore(backend store.Backend, machines []string, a *Agent, keyspace string, config *store.Config) *Store {
-	s, err := valkeyrie.NewStore(store.Backend(backend), machines, config)
+	db, err := badger.Open(opts)
 	if err != nil {
-		log.Error(err)
+		return nil, err
 	}
 
-	log.WithFields(logrus.Fields{
-		"backend":  backend,
-		"machines": machines,
-		"keyspace": keyspace,
-	}).Debug("store: Backend config")
-
-	return &Store{client: s, agent: a, keyspace: keyspace, backend: backend}
-}
-
-func (s *Store) Client() store.Store {
-	return s.client
-}
-
-func (s *Store) Healthy() error {
-	_, err := s.client.List(s.keyspace, nil)
-	if err != store.ErrKeyNotFound && err != nil {
-		return err
-	}
-	return nil
+	return &Store{
+		db:    db,
+		agent: a,
+	}, nil
 }
 
 // Store a job
@@ -96,7 +48,7 @@ func (s *Store) SetJob(job *Job, copyDependentJobs bool) error {
 
 	// Sanitize the job name
 	job.Name = generateSlug(job.Name)
-	jobKey := fmt.Sprintf("%s/jobs/%s", s.keyspace, job.Name)
+	jobKey := fmt.Sprintf("jobs/%s", job.Name)
 
 	// Init the job agent
 	job.Agent = s.agent
@@ -105,45 +57,80 @@ func (s *Store) SetJob(job *Job, copyDependentJobs bool) error {
 		return err
 	}
 
-	// Get if the requested job already exist
-	ej, err := s.GetJob(job.Name, nil)
-	if err != nil && err != store.ErrKeyNotFound {
-		return err
-	}
-	if ej != nil {
-		// When the job runs, these status vars are updated
-		// otherwise use the ones that are stored
-		if ej.LastError.After(job.LastError) {
-			job.LastError = ej.LastError
+	err := s.db.Update(func(txn *badger.Txn) error {
+		// Get if the requested job already exist
+		ej, err := s.GetJob(job.Name, nil)
+		if err != nil && err != store.ErrKeyNotFound {
+			return err
 		}
-		if ej.LastSuccess.After(job.LastSuccess) {
-			job.LastSuccess = ej.LastSuccess
+		if ej != nil {
+			// When the job runs, these status vars are updated
+			// otherwise use the ones that are stored
+			if ej.LastError.After(job.LastError) {
+				job.LastError = ej.LastError
+			}
+			if ej.LastSuccess.After(job.LastSuccess) {
+				job.LastSuccess = ej.LastSuccess
+			}
+			if ej.SuccessCount > job.SuccessCount {
+				job.SuccessCount = ej.SuccessCount
+			}
+			if ej.ErrorCount > job.ErrorCount {
+				job.ErrorCount = ej.ErrorCount
+			}
+			if len(ej.DependentJobs) != 0 && copyDependentJobs {
+				job.DependentJobs = ej.DependentJobs
+			}
 		}
-		if ej.SuccessCount > job.SuccessCount {
-			job.SuccessCount = ej.SuccessCount
-		}
-		if ej.ErrorCount > job.ErrorCount {
-			job.ErrorCount = ej.ErrorCount
-		}
-		if len(ej.DependentJobs) != 0 && copyDependentJobs {
-			job.DependentJobs = ej.DependentJobs
-		}
-	}
 
-	jobJSON, _ := json.Marshal(job)
+		pbj := job.ToProto()
+		jb, err := proto.Marshal(pbj)
+		if err != nil {
+			return err
+		}
+		log.WithField("job", job.Name).Debug("store: Setting job")
 
-	log.WithFields(logrus.Fields{
-		"job":  job.Name,
-		"json": string(jobJSON),
-	}).Debug("store: Setting job")
+		if err := txn.Set([]byte(jobKey), jb); err != nil {
+			return err
+		}
 
-	if err := s.client.Put(jobKey, jobJSON, nil); err != nil {
-		return err
-	}
+		if ej != nil {
+			// Existing job that doesn't have parent job set and it's being set
+			if ej.ParentJob == "" && job.ParentJob != "" {
+				pj, err := job.GetParent()
+				if err != nil {
+					return err
+				}
 
-	if ej != nil {
-		// Existing job that doesn't have parent job set and it's being set
-		if ej.ParentJob == "" && job.ParentJob != "" {
+				pj.DependentJobs = append(pj.DependentJobs, job.Name)
+				if err := s.SetJob(pj, false); err != nil {
+					return err
+				}
+			}
+
+			// Existing job that has parent job set and it's being removed
+			if ej.ParentJob != "" && job.ParentJob == "" {
+				pj, err := ej.GetParent()
+				if err != nil {
+					return err
+				}
+
+				ndx := 0
+				for i, djn := range pj.DependentJobs {
+					if djn == job.Name {
+						ndx = i
+						break
+					}
+				}
+				pj.DependentJobs = append(pj.DependentJobs[:ndx], pj.DependentJobs[ndx+1:]...)
+				if err := s.SetJob(pj, false); err != nil {
+					return err
+				}
+			}
+		}
+
+		// New job that has parent job set
+		if ej == nil && job.ParentJob != "" {
 			pj, err := job.GetParent()
 			if err != nil {
 				return err
@@ -155,39 +142,7 @@ func (s *Store) SetJob(job *Job, copyDependentJobs bool) error {
 			}
 		}
 
-		// Existing job that has parent job set and it's being removed
-		if ej.ParentJob != "" && job.ParentJob == "" {
-			pj, err := ej.GetParent()
-			if err != nil {
-				return err
-			}
-
-			ndx := 0
-			for i, djn := range pj.DependentJobs {
-				if djn == job.Name {
-					ndx = i
-					break
-				}
-			}
-			pj.DependentJobs = append(pj.DependentJobs[:ndx], pj.DependentJobs[ndx+1:]...)
-			if err := s.SetJob(pj, false); err != nil {
-				return err
-			}
-		}
-	}
-
-	// New job that has parent job set
-	if ej == nil && job.ParentJob != "" {
-		pj, err := job.GetParent()
-		if err != nil {
-			return err
-		}
-
-		pj.DependentJobs = append(pj.DependentJobs, job.Name)
-		if err := s.SetJob(pj, false); err != nil {
-			return err
-		}
-	}
+	})
 
 	return nil
 }
@@ -201,12 +156,7 @@ func (s *Store) validateTimeZone(timezone string) error {
 }
 
 func (s *Store) AtomicJobPut(job *Job, prevJobKVPair *store.KVPair) (bool, error) {
-	jobKey := fmt.Sprintf("%s/jobs/%s", s.keyspace, job.Name)
-	jobJSON, _ := json.Marshal(job)
-
-	ok, _, err := s.client.AtomicPut(jobKey, jobJSON, prevJobKVPair, nil)
-
-	return ok, err
+	return true, nil
 }
 
 func (s *Store) validateJob(job *Job) error {
@@ -256,41 +206,47 @@ func (s *Store) jobHasTags(job *Job, tags map[string]string) bool {
 
 // GetJobs returns all jobs
 func (s *Store) GetJobs(options *JobOptions) ([]*Job, error) {
-	res, err := s.client.List(s.keyspace+"/jobs/", nil)
-	if err != nil {
-		if err == store.ErrKeyNotFound {
-			log.Debug("store: No jobs found")
-			return []*Job{}, nil
-		}
-		return nil, err
-	}
-
 	jobs := make([]*Job, 0)
-	for _, node := range res {
-		var job Job
-		err := json.Unmarshal([]byte(node.Value), &job)
-		if err != nil {
-			return nil, err
-		}
-		job.Agent = s.agent
-		if options != nil {
-			if options.Tags != nil && len(options.Tags) > 0 && !s.jobHasTags(&job, options.Tags) {
-				continue
-			}
-			if options.ComputeStatus {
-				job.Status = job.GetStatus()
-			}
-		}
 
-		n, err := job.GetNext()
-		if err != nil {
-			return nil, err
-		}
-		job.Next = n
+	err := s.db.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+		prefix := []byte("jobs")
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			item := it.Item()
+			v, err := item.Value()
+			if err != nil {
+				return err
+			}
 
-		jobs = append(jobs, &job)
-	}
-	return jobs, nil
+			var pbj dkronpb.Job
+			if err := proto.Unmarshal(v, &pbj); err != nil {
+				return err
+			}
+			job := NewJobFromProto(&pbj)
+
+			job.Agent = s.agent
+			if options != nil {
+				if options.Tags != nil && len(options.Tags) > 0 && !s.jobHasTags(job, options.Tags) {
+					continue
+				}
+				if options.ComputeStatus {
+					job.Status = job.GetStatus()
+				}
+			}
+
+			n, err := job.GetNext()
+			if err != nil {
+				return err
+			}
+			job.Next = n
+
+			jobs = append(jobs, job)
+		}
+		return nil
+	})
+
+	return jobs, err
 }
 
 // Get a job
@@ -300,32 +256,41 @@ func (s *Store) GetJob(name string, options *JobOptions) (*Job, error) {
 }
 
 func (s *Store) GetJobWithKVPair(name string, options *JobOptions) (*Job, *store.KVPair, error) {
-	res, err := s.client.Get(s.keyspace+"/jobs/"+name, nil)
-	if err != nil {
-		return nil, nil, err
-	}
+	var job *Job
 
-	var job Job
-	if err = json.Unmarshal([]byte(res.Value), &job); err != nil {
-		return nil, nil, err
-	}
+	err := s.db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte("jobs/" + name))
+		if err != nil {
+			return err
+		}
 
-	log.WithFields(logrus.Fields{
-		"job": job.Name,
-	}).Debug("store: Retrieved job from datastore")
+		res, err := item.Value()
+		if err != nil {
+			return err
+		}
+		var pbj dkronpb.Job
+		if err := proto.Unmarshal(res, &pbj); err != nil {
+			return err
+		}
+		job = NewJobFromProto(&pbj)
 
-	job.Agent = s.agent
-	if options != nil && options.ComputeStatus {
-		job.Status = job.GetStatus()
-	}
+		log.WithFields(logrus.Fields{
+			"job": job.Name,
+		}).Debug("store: Retrieved job from datastore")
 
-	n, err := job.GetNext()
-	if err != nil {
-		return nil, nil, err
-	}
-	job.Next = n
+		job.Agent = s.agent
+		if options != nil && options.ComputeStatus {
+			job.Status = job.GetStatus()
+		}
 
-	return &job, res, nil
+		n, err := job.GetNext()
+		if err != nil {
+			return err
+		}
+		job.Next = n
+	})
+
+	return job, nil, nil
 }
 
 func (s *Store) DeleteJob(name string) (*Job, error) {
