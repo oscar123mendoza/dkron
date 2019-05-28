@@ -69,7 +69,7 @@ func (s *Store) SetJob(job *Job, copyDependentJobs bool) error {
 	err := s.db.Update(func(txn *badger.Txn) error {
 		// Get if the requested job already exist
 		ej, err := s.GetJob(job.Name, nil)
-		if err != nil && err != store.ErrKeyNotFound {
+		if err != nil && err != badger.ErrKeyNotFound {
 			return err
 		}
 		if ej != nil {

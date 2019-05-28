@@ -15,14 +15,10 @@ Settings can be specified in three ways (in order of precedence):
 
 ```yaml
 # Dkron example configuration file
-# backend: etcd
-# backend-machine: 127.0.0.1:2379
 # server: false
 # log-level: debug
 # tags:
-#   role: web
-#   datacenter: east
-# keyspace: dkron
+#   dc: east
 # encrypt: a-valid-key-generated-with-dkron-keygen
 # join:
 #   - 10.0.0.1

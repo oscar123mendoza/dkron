@@ -29,7 +29,6 @@ func TestGRPCExecutionDone(t *testing.T) {
 	c.NodeName = "test1"
 	c.Server = true
 	c.LogLevel = logLevel
-	c.Keyspace = "dkron"
 	c.Backend = store.Backend(backend)
 	c.BackendMachines = []string{os.Getenv("DKRON_BACKEND_MACHINE")}
 

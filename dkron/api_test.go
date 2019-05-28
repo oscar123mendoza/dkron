@@ -20,7 +20,6 @@ func setupAPITest(t *testing.T) (a *Agent) {
 	c.NodeName = "test"
 	c.Server = true
 	c.LogLevel = logLevel
-	c.Keyspace = "dkron-test"
 	c.Backend = store.Backend(backend)
 	c.BackendMachines = []string{backendMachine}
 
