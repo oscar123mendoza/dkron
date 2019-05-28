@@ -249,43 +249,6 @@ func (j *Job) GetParent() (*Job, error) {
 	return parentJob, nil
 }
 
-// Lock the job in store
-func (j *Job) Lock() error {
-	// Maybe we are testing
-	if j.Agent == nil {
-		return ErrNoAgent
-	}
-
-	lockKey := fmt.Sprintf("%s/job_locks/%s", j.Agent.Config().Keyspace, j.Name)
-	// TODO: LockOptions empty is a temporary fix until https://github.com/docker/libkv/pull/99 is fixed
-	l, err := j.Agent.Store.Client().NewLock(lockKey, &store.LockOptions{RenewLock: make(chan (struct{}))})
-	if err != nil {
-		return err
-	}
-	j.lock = l
-
-	_, err = j.lock.Lock(nil)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// Unlock the job in store
-func (j *Job) Unlock() error {
-	// Maybe we are testing
-	if j.Agent == nil {
-		return ErrNoAgent
-	}
-
-	if err := j.lock.Unlock(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // GetNext returns the job's next schedule
 func (j *Job) GetNext() (time.Time, error) {
 	if j.Schedule != "" {

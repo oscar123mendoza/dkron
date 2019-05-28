@@ -18,8 +18,4 @@ type Storage interface {
 	GetLastExecutionGroup(jobName string) ([]*Execution, error)
 	GetExecutionGroup(execution *Execution) ([]*Execution, error)
 	GetGroupedExecutions(jobName string) (map[int64][]*Execution, []int64, error)
-	GetLeader() []byte
-	LeaderKey() string
-	Healthy() error
-	Client() store.Store
 }

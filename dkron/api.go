@@ -3,7 +3,6 @@ package dkron
 import (
 	"fmt"
 	"net/http"
-	"strconv"
 
 	"github.com/abronan/valkeyrie/store"
 	"github.com/gin-contrib/expvar"
@@ -102,24 +101,16 @@ func renderJSON(c *gin.Context, status int, v interface{}) {
 func (h *HTTPTransport) indexHandler(c *gin.Context) {
 	local := h.agent.serf.LocalMember()
 
-	var status int
-	if err := h.agent.Store.Healthy(); err != nil {
-		status = http.StatusServiceUnavailable
-	} else {
-		status = http.StatusOK
-	}
-
 	stats := map[string]map[string]string{
 		"agent": {
-			"name":           local.Name,
-			"version":        Version,
-			"backend_status": strconv.FormatInt(int64(status), 10),
+			"name":    local.Name,
+			"version": Version,
 		},
 		"serf": h.agent.serf.Stats(),
 		"tags": local.Tags,
 	}
 
-	renderJSON(c, status, stats)
+	renderJSON(c, http.StatusOK, stats)
 }
 
 func (h *HTTPTransport) jobsHandler(c *gin.Context) {

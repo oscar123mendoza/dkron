@@ -11,7 +11,7 @@ import (
 )
 
 // RaftLayer implements the raft.StreamLayer interface,
-// so that we can use a single RPC layer for Raft and Nomad
+// so that we can use a single RPC layer for Raft and Dkron
 type RaftLayer struct {
 	// Addr is the listener address to return
 	addr net.Addr

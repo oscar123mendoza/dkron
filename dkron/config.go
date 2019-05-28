@@ -34,6 +34,12 @@ type Config struct {
 	AdvertiseRPCPort      int    `mapstructure:"advertise-rpc-port"`
 	LogLevel              string `mapstructure:"log-level"`
 
+	// ReconcileInterval controls how often we reconcile the strongly
+	// consistent store with the Serf info. This is used to handle nodes
+	// that are force removed, as well as intermittent unavailability during
+	// leader election.
+	ReconcileInterval time.Duration
+
 	MailHost          string `mapstructure:"mail-host"`
 	MailPort          uint16 `mapstructure:"mail-port"`
 	MailUsername      string `mapstructure:"mail-username"`

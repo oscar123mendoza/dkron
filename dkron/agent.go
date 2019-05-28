@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/abronan/leadership"
-	"github.com/abronan/valkeyrie/store"
 	metrics "github.com/armon/go-metrics"
 	"github.com/hashicorp/memberlist"
 	"github.com/hashicorp/raft"
@@ -26,12 +25,12 @@ import (
 )
 
 const (
-	defaultRecoverTime = 10 * time.Second
-	raftTimeout        = 10 * time.Second
-	rescheduleTime     = 2 * time.Second
+	raftTimeout    = 10 * time.Second
+	rescheduleTime = 2 * time.Second
 	// raftLogCacheSize is the maximum number of logs to cache in-memory.
 	// This is used to reduce disk I/O for the recently committed entries.
 	raftLogCacheSize = 512
+	minRaftProtocol  = 3
 )
 
 var (
@@ -58,20 +57,26 @@ type Agent struct {
 	// Set a global peer updater func
 	PeerUpdaterFunc func(...string)
 
-	serf      *serf.Serf
-	config    *Config
-	eventCh   chan serf.Event
-	sched     *Scheduler
-	candidate *leadership.Candidate
-	ready     bool
+	serf       *serf.Serf
+	config     *Config
+	eventCh    chan serf.Event
+	sched      *Scheduler
+	candidate  *leadership.Candidate
+	ready      bool
+	shutdownCh chan struct{}
 
-	// The raft instance is used among Nomad nodes within the
+	// The raft instance is used among Dkron nodes within the
 	// region to protect operations that require strong consistency
 	leaderCh      <-chan bool
 	raft          *raft.Raft
 	raftStore     *raftbadgerdb.BadgerStore
 	raftInmem     *raft.InmemStore
 	raftTransport *raft.NetworkTransport
+
+	// reconcileCh is used to pass events from the serf handler
+	// into the leader manager. Mostly used to handle when servers
+	// join/leave from the region.
+	reconcileCh chan serf.Member
 }
 
 // ProcessorFactory is a function type that creates a new instance
@@ -403,8 +408,11 @@ func (a *Agent) SetConfig(c *Config) {
 
 func (a *Agent) StartServer() {
 	if a.Store == nil {
-		var sConfig = store.Config{Bucket: a.config.Keyspace}
-		a.Store = NewStore(store.BOLTDB, []string{"./dkron.db"}, a, a.config.Keyspace, &sConfig)
+		s, err := NewStore(a, "./dkron.db")
+		if err != nil {
+			log.WithError(err).Fatal("dkron: Error initializing store")
+		}
+		a.Store = s
 	}
 
 	a.sched = NewScheduler()
@@ -426,55 +434,6 @@ func (a *Agent) StartServer() {
 	}
 
 	go a.monitorLeadership()
-
-	// if a.config.Backend != store.BOLTDB {
-	// 	a.participate()
-	// } else {
-	// 	a.schedule()
-	// }
-}
-
-func (a *Agent) participate() {
-	a.candidate = leadership.NewCandidate(a.Store.Client(), a.Store.LeaderKey(), a.config.NodeName, defaultLeaderTTL)
-
-	go func() {
-		for {
-			a.runForElection()
-			// retry
-			time.Sleep(defaultRecoverTime)
-		}
-	}()
-}
-
-// Leader election routine
-func (a *Agent) runForElection() {
-	log.Info("agent: Running for election")
-	defer metrics.MeasureSince([]string{"agent", "runForElection"}, time.Now())
-	electedCh, errCh := a.candidate.RunForElection()
-
-	for {
-		select {
-		case isElected := <-electedCh:
-			if isElected {
-				log.Info("agent: Cluster leadership acquired")
-				metrics.IncrCounter([]string{"agent", "leadership_acquired"}, 1)
-				// If this server is elected as the leader, start the scheduler
-				a.schedule()
-			} else {
-				log.Info("agent: Cluster leadership lost")
-				metrics.IncrCounter([]string{"agent", "leadership_lost"}, 1)
-				// Always stop the schedule of this server to prevent multiple servers with the scheduler on
-				a.sched.Stop()
-			}
-
-		case err := <-errCh:
-			log.WithError(err).Error("Leader election failed, channel is probably closed")
-			metrics.IncrCounter([]string{"agent", "election", "failure"}, 1)
-			// Always stop the schedule of this server to prevent multiple servers with the scheduler on
-			a.sched.Stop()
-			return
-		}
-	}
 }
 
 // SchedulerRestart Dispatch a SchedulerRestartQuery to the cluster but
@@ -498,6 +457,11 @@ func (a *Agent) leaderMember() (*serf.Member, error) {
 		}
 	}
 	return nil, ErrLeaderNotFound
+}
+
+// IsLeader checks if this server is the cluster leader
+func (a *Agent) IsLeader() bool {
+	return a.raft.State() == raft.Leader
 }
 
 // ListServers returns the list of server members
@@ -564,6 +528,8 @@ func (a *Agent) eventLoop() {
 				if a.PeerUpdaterFunc != nil {
 					a.PeerUpdaterFunc(a.GetPeers()...)
 				}
+
+				a.localMemberEvent(me)
 			}
 
 			if e.EventType() == serf.EventQuery {
