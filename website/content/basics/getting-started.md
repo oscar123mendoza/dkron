@@ -21,21 +21,9 @@ You can choose whether a job is run on a node or nodes by specifying tags and a 
 
 All the execution responses will be gathered by the scheduler and stored in the database.
 
-## Backend stores
+## State storage
 
-Dkron relies on the key-value store for data storage, an instance of the distributed store can be run in the same machines as Dkron or connect it to an already existing cluster.
-
-{{% notice note %}}
-By default dkron will start with a file based, embedded KV store called BoltDB, it is functional for a single node demo but does not offers clustering or HA.
-{{% /notice %}}
-
-It is compatible with etcd, Consul, Zookeeper, Redis, DynamoDB and BoltDB. For instructions on how to install and configure any one of these systems refer to their official sites:
-
-- [etcd](https://coreos.com/etcd/docs/latest/)
-- [Consul](https://consul.io/intro/getting-started/install.html)
-- [ZooKeeper](https://zookeeper.apache.org/doc/r3.3.3/zookeeperStarted.html)
-- [Redis](https://redis.io/topics/quickstart)
-- [DynamoDB](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/SettingUp.html)
+Dkron deployment is just a single binary, it stores the state in an internal BargerDB instance and replicate all changes between all server nodes using the Raft protocol, it doesn't need any other storage system outside itself.
 
 ## Installation
 
@@ -56,8 +44,6 @@ By default Dkron uses the following ports:
 {{% notice note %}}
 Be sure you have opened this ports (or the ones that you configured) in your firewall or AWS security groups.
 {{% /notice %}}
-
-By default dkron will use the embedded BoltDB KV store. A different store can be specified setting `backend` and `backend-machines` flag in the config file, env variables or as a command line flag.
 
 To start a Dkron server instance:
 

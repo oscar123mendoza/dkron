@@ -60,8 +60,8 @@ func (a *Agent) monitorLeadership() {
 				log.Info("dkron: cluster leadership lost")
 			}
 
-			//case <-a.shutdownCh:
-			//	return
+		case <-a.shutdownCh:
+			return
 		}
 	}
 }
@@ -165,6 +165,7 @@ func (a *Agent) reconcileMember(member serf.Member) error {
 	}
 	defer metrics.MeasureSince([]string{"dkron", "leader", "reconcileMember"}, time.Now())
 
+	log.Debug("********************** Reconcile member", member)
 	var err error
 	switch member.Status {
 	case serf.StatusAlive:

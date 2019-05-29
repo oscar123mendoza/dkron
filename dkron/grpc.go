@@ -45,7 +45,7 @@ func (grpcs *GRPCServer) Serve() error {
 	rpca := fmt.Sprintf("%s:%d", bindIp, grpcs.agent.config.RPCPort)
 	log.WithFields(logrus.Fields{
 		"rpc_addr": rpca,
-	}).Debug("grpc: Registering GRPC server")
+	}).Debug("grpc: Registering gRPC server")
 
 	lis, err := net.Listen("tcp", rpca)
 	if err != nil {
@@ -100,9 +100,7 @@ func (grpcs *GRPCServer) SetJob(ctx context.Context, setJobReq *proto.SetJobRequ
 // This only works on the leader
 func (grpcs *GRPCServer) DeleteJob(ctx context.Context, delJobReq *proto.DeleteJobRequest) (*proto.DeleteJobResponse, error) {
 	defer metrics.MeasureSince([]string{"grpc", "delete_job"}, time.Now())
-	log.WithFields(logrus.Fields{
-		"job": delJobReq.GetJobName(),
-	}).Debug("grpc: Received DeleteJob")
+	log.WithField("job", delJobReq.GetJobName()).Debug("grpc: Received DeleteJob")
 
 	cmd, err := Encode(DeleteJobType, delJobReq)
 	if err != nil {
@@ -113,17 +111,19 @@ func (grpcs *GRPCServer) DeleteJob(ctx context.Context, delJobReq *proto.DeleteJ
 		return nil, err
 	}
 	res := af.Response()
-	job := res.(*Job)
+	job, ok := res.(*Job)
+	if !ok {
+		return nil, fmt.Errorf("grpc: Error wrong response from apply in DeleteJob: %v", res)
+	}
 	jpb := job.ToProto()
 
 	return &proto.DeleteJobResponse{Job: jpb}, nil
 }
 
+// GetJob loads the job from the datastore
 func (grpcs *GRPCServer) GetJob(ctx context.Context, getJobReq *proto.GetJobRequest) (*proto.GetJobResponse, error) {
 	defer metrics.MeasureSince([]string{"grpc", "get_job"}, time.Now())
-	log.WithFields(logrus.Fields{
-		"job": getJobReq.JobName,
-	}).Debug("grpc: Received GetJob")
+	log.WithField("job", getJobReq.JobName).Debug("grpc: Received GetJob")
 
 	j, err := grpcs.agent.Store.GetJob(getJobReq.JobName, nil)
 	if err != nil {

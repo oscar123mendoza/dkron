@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -76,8 +75,6 @@ func initConfig() {
 	} else {
 		tags = viper.GetStringMapString("tags")
 	}
-	tags["dkron_server"] = strconv.FormatBool(config.Server)
-	tags["dkron_version"] = dkron.Version
 
 	config.Tags = tags
 

@@ -33,6 +33,18 @@ type Config struct {
 	AdvertiseRPCPort      int      `mapstructure:"advertise-rpc-port"`
 	LogLevel              string   `mapstructure:"log-level"`
 
+	// Bootstrap mode is used to bring up the first Nomad server.  It is
+	// required so that it can elect a leader without any other nodes
+	// being present
+	Bootstrap bool
+
+	// BootstrapExpect tries to automatically bootstrap the Consul cluster,
+	// by withholding peers until enough servers join.
+	BootstrapExpect int `mapstructure:"bootstrap-expect"`
+
+	// DataDir is the directory to store our state in
+	DataDir string `mapstructure:"data-dir"`
+
 	// ReconcileInterval controls how often we reconcile the strongly
 	// consistent store with the Serf info. This is used to handle nodes
 	// that are force removed, as well as intermittent unavailability during
@@ -69,7 +81,7 @@ func DefaultConfig() *Config {
 		log.Panic(err)
 	}
 
-	tags := map[string]string{"dkron_version": Version}
+	tags := map[string]string{}
 
 	return &Config{
 		NodeName:          hostname,
@@ -80,6 +92,7 @@ func DefaultConfig() *Config {
 		RPCPort:           6868,
 		MailSubjectPrefix: "[Dkron]",
 		Tags:              tags,
+		DataDir:           "dkron.data",
 	}
 }
 
@@ -100,6 +113,8 @@ func ConfigFlagSet() *flag.FlagSet {
 	cmdFlags.String("log-level", c.LogLevel, "Log level (debug|info|warn|error|fatal|panic)")
 	cmdFlags.Int("rpc-port", c.RPCPort, "RPC Port used to communicate with clients. Only used when server. The RPC IP Address will be the same as the bind address")
 	cmdFlags.Int("advertise-rpc-port", 0, "Use the value of rpc-port by default")
+	cmdFlags.Int("bootstrap-expect", 0, "Expected cluster size")
+	cmdFlags.String("data-dir", c.DataDir, "Data directory")
 
 	// Notifications
 	cmdFlags.String("mail-host", "", "Mail server host address to use for notifications")

@@ -19,8 +19,8 @@ import (
 	metrics "github.com/armon/go-metrics"
 	"github.com/hashicorp/memberlist"
 	"github.com/hashicorp/raft"
+	raftboltdb "github.com/hashicorp/raft-boltdb"
 	"github.com/hashicorp/serf/serf"
-	raftbadgerdb "github.com/markthethomas/raft-badger"
 	"github.com/sirupsen/logrus"
 )
 
@@ -69,7 +69,8 @@ type Agent struct {
 	// region to protect operations that require strong consistency
 	leaderCh      <-chan bool
 	raft          *raft.Raft
-	raftStore     *raftbadgerdb.BadgerStore
+	raftLayer     *RaftLayer
+	raftStore     *raftboltdb.BoltStore
 	raftInmem     *raft.InmemStore
 	raftTransport *raft.NetworkTransport
 
@@ -122,9 +123,11 @@ func (a *Agent) Start() error {
 		a.GRPCClient = NewGRPCClient(nil, a)
 	}
 
-	if err := a.SetTags(a.config.Tags); err != nil {
-		log.WithError(err).Fatal("agent: Error setting RPC config tags")
+	tags := a.serf.LocalMember().Tags
+	if a.config.Server {
+		tags["rpc_addr"] = a.getRPCAddr() // Address that clients will use to RPC to servers
 	}
+	a.serf.SetTags(tags)
 
 	go a.eventLoop()
 	a.ready = true
@@ -158,37 +161,42 @@ func (a *Agent) Stop() error {
 
 func (a *Agent) setupRaft() error {
 	// Create a transport layer
+	// TODO: Get rpc address from config
 	addr, err := net.ResolveTCPAddr("tcp", a.serf.LocalMember().Addr.String()+":6868")
 	if err != nil {
 		return err
 	}
 
 	rl := NewRaftLayer(addr)
-	transport := raft.NewNetworkTransport(rl, 3, raftTimeout, os.Stdout) //raft.NewTCPTransport(addr.String(), addr, 3, 10*time.Second, os.Stdout)
+	a.raftLayer = rl
+	transport := raft.NewNetworkTransport(rl, 3, raftTimeout, os.Stdout)
 	a.raftTransport = transport
 
-	if err := os.MkdirAll("raft.db", 0700); err != nil {
-		return err
-	}
+	// if err := os.MkdirAll("raft.db", 0700); err != nil {
+	// 	return err
+	// }
 
 	config := raft.DefaultConfig()
 
 	// Create the snapshot store. This allows the Raft to truncate the log to
 	// mitigate the issue of having an unbounded replicated log.
-	snapshots, err := raft.NewFileSnapshotStore("raft.db", 3, os.Stderr)
+	snapshots, err := raft.NewFileSnapshotStore(filepath.Join(a.config.DataDir, "raft"), 3, os.Stderr)
 	if err != nil {
 		return fmt.Errorf("file snapshot store: %s", err)
 	}
 
 	// Create the log store and stable store. This is the store used to keep
 	// the raft logs.
-	badgerDB, err := raftbadgerdb.NewBadgerStore(filepath.Join("raft.db"))
+	stableStore, err := raftboltdb.NewBoltStore(filepath.Join(a.config.DataDir, "raft", "raft.db"))
+	// stableStore, err := raftbadgerdb.New(raftbadgerdb.Options{
+	// 	Path:       filepath.Join("raft.db"),
+	// 	ValueLogGC: true,
+	// })
 	if err != nil {
 		return fmt.Errorf("error creating new badger store: %s", err)
 	}
-	logStore := badgerDB
-	stableStore := badgerDB
-	a.raftStore = badgerDB
+	logStore := stableStore
+	a.raftStore = stableStore
 
 	// Wrap the store in a LogCache to improve performance
 	cacheStore, err := raft.NewLogCache(raftLogCacheSize, stableStore)
@@ -201,7 +209,7 @@ func (a *Agent) setupRaft() error {
 
 	// If we are in bootstrap or dev mode and the state is clean then we can
 	// bootstrap now.
-	if true {
+	if a.config.BootstrapExpect > 0 /*|| a.config.DevMode*/ {
 		hasState, err := raft.HasExistingState(logStore, stableStore, snapshots)
 		if err != nil {
 			return err
@@ -333,6 +341,23 @@ func (a *Agent) setupSerf() (*serf.Serf, error) {
 	}
 
 	serfConfig := serf.DefaultConfig()
+	serfConfig.Init()
+
+	serfConfig.Tags = a.config.Tags
+	serfConfig.Tags["role"] = "dkron"
+	//serfConfig.Tags["dc"] = s.config.Datacenter
+	//serfConfig.Tags["build"] = s.config.Build
+	serfConfig.Tags["version"] = Version
+	if a.config.Server {
+		serfConfig.Tags["server"] = strconv.FormatBool(a.config.Server)
+	}
+	if a.config.BootstrapExpect > 0 {
+		serfConfig.Tags["bootstrap"] = "1"
+	}
+	if a.config.BootstrapExpect != 0 {
+		serfConfig.Tags["expect"] = fmt.Sprintf("%d", a.config.BootstrapExpect)
+	}
+
 	switch config.Profile {
 	case "lan":
 		serfConfig.MemberlistConfig = memberlist.DefaultLANConfig()
@@ -392,7 +417,6 @@ func (a *Agent) setupSerf() (*serf.Serf, error) {
 		log.Error(err)
 		return nil, err
 	}
-
 	return serf, nil
 }
 
@@ -408,7 +432,18 @@ func (a *Agent) SetConfig(c *Config) {
 
 func (a *Agent) StartServer() {
 	if a.Store == nil {
-		s, err := NewStore(a, "./dkron.db")
+		dirExists, err := exists(a.config.DataDir)
+		if err != nil {
+			log.WithError(err).WithField("dir", a.config.DataDir).Fatal("Invalid Dir")
+		}
+		if !dirExists {
+			// Try to create the directory
+			err := os.Mkdir(a.config.DataDir, 0700)
+			if err != nil {
+				log.WithError(err).WithField("dir", a.config.DataDir).Fatal("Error Creating Dir")
+			}
+		}
+		s, err := NewStore(a, filepath.Join(a.config.DataDir, "badger.db"))
 		if err != nil {
 			log.WithError(err).Fatal("dkron: Error initializing store")
 		}
@@ -452,7 +487,7 @@ func (a *Agent) SchedulerRestart() {
 func (a *Agent) leaderMember() (*serf.Member, error) {
 	l := a.raft.Leader()
 	for _, member := range a.serf.Members() {
-		if member.Tags["dkron_rpc_addr"] == string(l) {
+		if member.Tags["rpc_addr"] == string(l) {
 			return &member, nil
 		}
 	}
@@ -494,7 +529,7 @@ func (a *Agent) GetBindIP() (string, error) {
 func (a *Agent) GetPeers() (peers []string) {
 	s := a.ListServers()
 	for _, m := range s {
-		if addr, ok := m.Tags["dkron_rpc_addr"]; ok {
+		if addr, ok := m.Tags["rpc_addr"]; ok {
 			peers = append(peers, addr)
 		}
 	}
@@ -710,13 +745,6 @@ func (a *Agent) getRPCAddr() string {
 	bindIP := a.serf.LocalMember().Addr
 
 	return fmt.Sprintf("%s:%d", bindIP, a.config.AdvertiseRPCPort)
-}
-
-func (a *Agent) SetTags(tags map[string]string) error {
-	if a.config.Server {
-		tags["dkron_rpc_addr"] = a.getRPCAddr()
-	}
-	return a.serf.SetTags(tags)
 }
 
 // RefreshJobStatus asks the nodes their progress on an execution

@@ -3,6 +3,7 @@ package dkron
 import (
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"unicode"
@@ -128,4 +129,15 @@ func isServer(m serf.Member) (bool, *serverParts) {
 		NonVoter:     nonVoter,
 	}
 	return true, parts
+}
+
+func exists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return true, err
 }

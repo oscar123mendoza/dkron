@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/abronan/valkeyrie/store"
@@ -18,6 +19,8 @@ import (
 const (
 	MaxExecutions            = 100
 	defaultUpdateMaxAttempts = 5
+	defaultGCInterval        = 5 * time.Minute
+	defaultGCDiscardRatio    = 0.7
 )
 
 var (
@@ -26,8 +29,10 @@ var (
 )
 
 type Store struct {
-	agent *Agent
-	db    *badger.DB
+	agent  *Agent
+	db     *badger.DB
+	lock   *sync.Mutex // for
+	closed bool
 }
 
 type JobOptions struct {
@@ -45,10 +50,37 @@ func NewStore(a *Agent, dir string) (*Store, error) {
 		return nil, err
 	}
 
-	return &Store{
+	store := &Store{
 		db:    db,
 		agent: a,
-	}, nil
+		lock:  &sync.Mutex{},
+	}
+
+	go store.runGcLoop()
+
+	return store, nil
+}
+
+func (s *Store) runGcLoop() {
+	ticker := time.NewTicker(defaultGCInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		s.lock.Lock()
+		closed := s.closed
+		s.lock.Unlock()
+		if closed {
+			break
+		}
+
+		// One call would only result in removal of at max one log file.
+		// As an optimization, you could also immediately re-run it whenever it returns nil error
+		//(indicating a successful value log GC), as shown below.
+	again:
+		err := s.db.RunValueLogGC(defaultGCDiscardRatio)
+		if err == nil {
+			goto again
+		}
+	}
 }
 
 // Store a job
@@ -306,16 +338,18 @@ func (s *Store) GetJobWithKVPair(name string, options *JobOptions) (*Job, *store
 func (s *Store) DeleteJob(name string) (*Job, error) {
 	var job *Job
 	err := s.db.Update(func(txn *badger.Txn) error {
-		_, err := s.GetJob(name, nil)
+		j, err := s.GetJob(name, nil)
 		if err != nil {
 			return err
 		}
+		job = j
 
 		if err := s.DeleteExecutions(name); err != nil {
 			if err != store.ErrKeyNotFound {
 				return err
 			}
 		}
+
 		return txn.Delete([]byte("jobs/" + name))
 	})
 
