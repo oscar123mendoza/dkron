@@ -78,6 +78,12 @@ type Agent struct {
 	// into the leader manager. Mostly used to handle when servers
 	// join/leave from the region.
 	reconcileCh chan serf.Member
+
+	// peers is used to track the known Nomad servers. This is
+	// used for region forwarding and clustering.
+	peers      map[string][]*serverParts
+	localPeers map[raft.ServerAddress]*serverParts
+	peerLock   sync.RWMutex
 }
 
 // ProcessorFactory is a function type that creates a new instance
@@ -126,6 +132,7 @@ func (a *Agent) Start() error {
 	tags := a.serf.LocalMember().Tags
 	if a.config.Server {
 		tags["rpc_addr"] = a.getRPCAddr() // Address that clients will use to RPC to servers
+		tags["port"] = strconv.Itoa(a.config.AdvertiseRPCPort)
 	}
 	a.serf.SetTags(tags)
 
@@ -160,13 +167,14 @@ func (a *Agent) Stop() error {
 }
 
 func (a *Agent) setupRaft() error {
+	if a.config.BootstrapExpect > 0 {
+		if a.config.BootstrapExpect == 1 {
+			a.config.Bootstrap = true
+		}
+	}
 	// Create a transport layer
 	// TODO: Get rpc address from config
-	addr, err := net.ResolveTCPAddr("tcp", a.serf.LocalMember().Addr.String()+":6868")
-	if err != nil {
-		return err
-	}
-
+	addr := &net.TCPAddr{IP: a.serf.LocalMember().Addr, Port: a.config.AdvertiseRPCPort}
 	rl := NewRaftLayer(addr)
 	a.raftLayer = rl
 	transport := raft.NewNetworkTransport(rl, 3, raftTimeout, os.Stdout)
@@ -209,7 +217,7 @@ func (a *Agent) setupRaft() error {
 
 	// If we are in bootstrap or dev mode and the state is clean then we can
 	// bootstrap now.
-	if a.config.BootstrapExpect > 0 /*|| a.config.DevMode*/ {
+	if a.config.Bootstrap { /*|| a.config.DevMode*/
 		hasState, err := raft.HasExistingState(logStore, stableStore, snapshots)
 		if err != nil {
 			return err
@@ -345,8 +353,8 @@ func (a *Agent) setupSerf() (*serf.Serf, error) {
 
 	serfConfig.Tags = a.config.Tags
 	serfConfig.Tags["role"] = "dkron"
-	//serfConfig.Tags["dc"] = s.config.Datacenter
-	//serfConfig.Tags["build"] = s.config.Build
+	serfConfig.Tags["dc"] = a.config.Datacenter
+	serfConfig.Tags["region"] = a.config.Region
 	serfConfig.Tags["version"] = Version
 	if a.config.Server {
 		serfConfig.Tags["server"] = strconv.FormatBool(a.config.Server)
@@ -544,9 +552,7 @@ func (a *Agent) eventLoop() {
 	for {
 		select {
 		case e := <-a.eventCh:
-			log.WithFields(logrus.Fields{
-				"event": e.String(),
-			}).Info("agent: Received event")
+			log.WithField("event", e.String()).Info("agent: Received event")
 			metrics.IncrCounter([]string{"agent", "event_received", e.String()}, 1)
 
 			// Log all member events
@@ -557,6 +563,21 @@ func (a *Agent) eventLoop() {
 						"member": member.Name,
 						"event":  e.EventType(),
 					}).Debug("agent: Member event")
+				}
+
+				// serfEventHandler is used to handle events from the serf cluster
+				switch e.EventType() {
+				case serf.EventMemberJoin:
+					a.nodeJoin(e.(serf.MemberEvent))
+					a.localMemberEvent(e.(serf.MemberEvent))
+				case serf.EventMemberLeave, serf.EventMemberFailed:
+					a.nodeFailed(e.(serf.MemberEvent))
+					a.localMemberEvent(e.(serf.MemberEvent))
+				case serf.EventMemberReap:
+					a.localMemberEvent(e.(serf.MemberEvent))
+				case serf.EventMemberUpdate, serf.EventUser, serf.EventQuery: // Ignore
+				default:
+					log.WithField("event", e.String()).Warn("agent: Unhandled serf event")
 				}
 
 				//In case of member event update peer list

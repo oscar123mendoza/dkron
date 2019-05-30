@@ -236,10 +236,6 @@ func (a *Agent) addRaftPeer(m serf.Member, parts *serverParts) error {
 	// log entries. If the address is the same but the ID changed, remove the
 	// old server before adding the new one.
 	for _, server := range configFuture.Configuration().Servers {
-		// No-op if the raft version is too low
-		if server.Address == raft.ServerAddress(addr) && (minRaftProtocol < 2 || parts.RaftVersion < 3) {
-			return nil
-		}
 
 		// If the address or ID matches an existing server, see if we need to remove the old one first
 		if server.Address == raft.ServerAddress(addr) || server.ID == raft.ServerID(parts.ID) {
@@ -265,7 +261,7 @@ func (a *Agent) addRaftPeer(m serf.Member, parts *serverParts) error {
 	// Attempt to add as a peer
 	switch {
 	case minRaftProtocol >= 3:
-		addFuture := a.raft.AddNonvoter(raft.ServerID(parts.ID), raft.ServerAddress(addr), 0, 0)
+		addFuture := a.raft.AddVoter(raft.ServerID(parts.ID), raft.ServerAddress(addr), 0, 0)
 		if err := addFuture.Error(); err != nil {
 			log.WithError(err).Error("dkron: failed to add raft peer")
 			return err

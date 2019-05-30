@@ -46,7 +46,6 @@ type serverParts struct {
 	Addr         net.Addr
 	RPCAddr      net.Addr
 	Status       serf.MemberStatus
-	NonVoter     bool
 }
 
 func (s *serverParts) String() string {
@@ -96,20 +95,8 @@ func isServer(m serf.Member) (bool, *serverParts) {
 
 	buildVersion, err := version.NewVersion(m.Tags["version"])
 	if err != nil {
-		return false, nil
+		buildVersion = &version.Version{}
 	}
-
-	raftVsn := 0
-	raftVsnString, ok := m.Tags["raft_vsn"]
-	if ok {
-		raftVsn, err = strconv.Atoi(raftVsnString)
-		if err != nil {
-			return false, nil
-		}
-	}
-
-	// Check if the server is a non voter
-	_, nonVoter := m.Tags["nonvoter"]
 
 	addr := &net.TCPAddr{IP: m.Addr, Port: port}
 	rpcAddr := &net.TCPAddr{IP: rpcIP, Port: port}
@@ -123,10 +110,8 @@ func isServer(m serf.Member) (bool, *serverParts) {
 		Expect:       expect,
 		Addr:         addr,
 		RPCAddr:      rpcAddr,
-		RaftVersion:  raftVsn,
 		BuildVersion: buildVersion,
 		Status:       m.Status,
-		NonVoter:     nonVoter,
 	}
 	return true, parts
 }
