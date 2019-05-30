@@ -79,7 +79,7 @@ type Agent struct {
 	// join/leave from the region.
 	reconcileCh chan serf.Member
 
-	// peers is used to track the known Nomad servers. This is
+	// peers is used to track the known Dkron servers. This is
 	// used for region forwarding and clustering.
 	peers      map[string][]*serverParts
 	localPeers map[raft.ServerAddress]*serverParts

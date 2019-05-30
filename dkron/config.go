@@ -35,7 +35,7 @@ type Config struct {
 	Datacenter            string
 	Region                string
 
-	// Bootstrap mode is used to bring up the first Nomad server.  It is
+	// Bootstrap mode is used to bring up the first Dkron server.  It is
 	// required so that it can elect a leader without any other nodes
 	// being present
 	Bootstrap bool
