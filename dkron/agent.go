@@ -253,6 +253,10 @@ func (a *Agent) setupRaft() error {
 func (a *Agent) setupSerf() (*serf.Serf, error) {
 	config := a.config
 
+	// Init peer list
+	a.localPeers = make(map[raft.ServerAddress]*serverParts)
+	a.peers = make(map[string][]*serverParts)
+
 	bindIP, bindPort, err := config.AddrParts(config.BindAddr)
 	if err != nil {
 		return nil, fmt.Errorf("Invalid bind address: %s", err)
@@ -359,7 +363,7 @@ func (a *Agent) setupSerf() (*serf.Serf, error) {
 	if a.config.Server {
 		serfConfig.Tags["server"] = strconv.FormatBool(a.config.Server)
 	}
-	if a.config.BootstrapExpect > 0 {
+	if a.config.Bootstrap {
 		serfConfig.Tags["bootstrap"] = "1"
 	}
 	if a.config.BootstrapExpect != 0 {
