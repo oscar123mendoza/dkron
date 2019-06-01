@@ -123,7 +123,7 @@ func (l *RaftLayer) Dial(address raft.ServerAddress, timeout time.Duration) (net
 	// }
 
 	// Write the Raft byte to set the mode
-	// _, err = conn.Write([]byte{byte(pool.RpcRaft)})
+	// _, err = conn.Write([]byte{byte(0x02)})
 	// if err != nil {
 	// 	conn.Close()
 	// 	return nil, err

@@ -22,6 +22,7 @@ import (
 	raftboltdb "github.com/hashicorp/raft-boltdb"
 	"github.com/hashicorp/serf/serf"
 	"github.com/sirupsen/logrus"
+	"github.com/victorcoder/dkron/dkron/tcp"
 )
 
 const (
@@ -175,9 +176,11 @@ func (a *Agent) setupRaft() error {
 	// Create a transport layer
 	// TODO: Get rpc address from config
 	addr := &net.TCPAddr{IP: a.serf.LocalMember().Addr, Port: a.config.AdvertiseRPCPort}
-	rl := NewRaftLayer(addr)
-	a.raftLayer = rl
-	transport := raft.NewNetworkTransport(rl, 3, raftTimeout, os.Stdout)
+	rl := tcp.NewTransport()
+	err := rl.Open(addr.String())
+	//rl := NewRaftLayer(addr)
+	//a.raftLayer = rl
+	transport := raft.NewNetworkTransport(rl, 3, raftTimeout, os.Stdout) //raft.NewTCPTransport(addr.String(), addr, 3, raftTimeout, os.Stdout)
 	a.raftTransport = transport
 
 	// if err := os.MkdirAll("raft.db", 0700); err != nil {

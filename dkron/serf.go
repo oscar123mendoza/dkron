@@ -99,6 +99,9 @@ func (a *Agent) maybeBootstrap() {
 			log.Error("peer has bootstrap mode. Expect disabled", "member", member)
 			return
 		}
+		if valid {
+			voters++
+		}
 		servers = append(servers, *p)
 	}
 
@@ -126,11 +129,11 @@ func (a *Agent) maybeBootstrap() {
 		}
 		configuration.Servers = append(configuration.Servers, peer)
 	}
-	log.Info("found expected number of peers, attempting to bootstrap cluster...",
+	log.Info("agent: found expected number of peers, attempting to bootstrap cluster...",
 		"peers", strings.Join(addrs, ","))
 	future := a.raft.BootstrapCluster(configuration)
 	if err := future.Error(); err != nil {
-		log.Error("failed to bootstrap cluster", "error", err)
+		log.Error("agent: failed to bootstrap cluster", "error", err)
 	}
 
 	// Bootstrapping complete, or failed for some reason, don't enter this again
