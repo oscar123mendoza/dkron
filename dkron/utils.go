@@ -80,6 +80,10 @@ func isServer(m serf.Member) (bool, *serverParts) {
 			return false, nil
 		}
 	}
+	// TODO
+	if expect == 1 {
+		bootstrap = true
+	}
 
 	// If the server is missing the rpc_addr tag, default to the serf advertise addr
 	rpcIP := net.ParseIP(m.Tags["rpc_addr"])

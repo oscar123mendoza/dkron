@@ -35,20 +35,20 @@ func NewTLSTransport(certFile, keyPath string, skipVerify bool) *Transport {
 }
 
 // Open opens the transport, binding to the supplied address.
-func (t *Transport) Open(addr string) error {
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return err
-	}
+func (t *Transport) Open(l net.Listener) error {
+	// ln, err := net.Listen("tcp", addr)
+	// if err != nil {
+	// 	return err
+	// }
 	if t.certFile != "" {
 		config, err := createTLSConfig(t.certFile, t.certKey)
 		if err != nil {
 			return err
 		}
-		ln = tls.NewListener(ln, config)
+		l = tls.NewListener(l, config)
 	}
 
-	t.ln = ln
+	t.ln = l
 	return nil
 }
 

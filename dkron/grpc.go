@@ -23,7 +23,7 @@ var (
 
 type DkronGRPCServer interface {
 	proto.DkronServer
-	Serve() error
+	Serve(net.Listener) error
 }
 
 type GRPCServer struct {
@@ -37,21 +37,7 @@ func NewGRPCServer(agent *Agent) DkronGRPCServer {
 	}
 }
 
-func (grpcs *GRPCServer) Serve() error {
-	bindIp, err := grpcs.agent.GetBindIP()
-	if err != nil {
-		return err
-	}
-	rpca := fmt.Sprintf("%s:%d", bindIp, grpcs.agent.config.RPCPort)
-	log.WithFields(logrus.Fields{
-		"rpc_addr": rpca,
-	}).Debug("grpc: Registering gRPC server")
-
-	lis, err := net.Listen("tcp", rpca)
-	if err != nil {
-		log.Fatalf("grpc: failed to listen: %v", err)
-	}
-
+func (grpcs *GRPCServer) Serve(lis net.Listener) error {
 	grpcServer := grpc.NewServer()
 	proto.RegisterDkronServer(grpcServer, grpcs)
 	go grpcServer.Serve(lis)
@@ -144,7 +130,6 @@ func (grpcs *GRPCServer) GetJob(ctx context.Context, getJobReq *proto.GetJobRequ
 
 // ExecutionDone saves the execution to the store
 func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.ExecutionDoneRequest) (*proto.ExecutionDoneResponse, error) {
-
 	defer metrics.MeasureSince([]string{"grpc", "execution_done"}, time.Now())
 	log.WithFields(logrus.Fields{
 		"group": execDoneReq.Execution.Group,
@@ -238,11 +223,22 @@ func (grpcs *GRPCServer) Leave(ctx context.Context, in *empty.Empty) (*empty.Emp
 	return in, grpcs.agent.Stop()
 }
 
-type DkronGRPCClient interface {
-	Connect(string) (*grpc.ClientConn, error)
-	CallExecutionDone(string, *Execution) error
-	CallGetJob(string, string) (*Job, error)
-	CallSetJob(*Job) error
-	CallDeleteJob(string) (*Job, error)
-	Leave(string) error
+// RunJob runs a job in the cluster
+func (grpcs *GRPCServer) RunJob(ctx context.Context, req *proto.RunJobRequest) (*proto.RunJobResponse, error) {
+	job, err := grpcs.agent.Store.GetJob(req.JobName, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	ex := NewExecution(job.Name)
+	grpcs.agent.RunQuery(ex)
+
+	jpb := job.ToProto()
+
+	return &proto.RunJobResponse{Job: jpb}, nil
+}
+
+// ToggleJob toggle the enablement of a job
+func (grpcs *GRPCServer) ToggleJob(ctx context.Context, getJobReq *proto.ToggleJobRequest) (*proto.ToggleJobResponse, error) {
+	return nil, nil
 }

@@ -73,10 +73,28 @@ message Executions {
   repeated Execution executions = 1;
 }
 
+message RunJobRequest {
+  string job_name = 1;
+}
+
+message RunJobResponse {
+  Job job = 1;
+}
+
+message ToggleJobRequest {
+  string job_name = 1;
+}
+
+message ToggleJobResponse {
+  Job job = 1;
+}
+
 service Dkron {
   rpc GetJob (GetJobRequest) returns (GetJobResponse);
   rpc ExecutionDone (ExecutionDoneRequest) returns (ExecutionDoneResponse);
   rpc Leave (google.protobuf.Empty) returns (google.protobuf.Empty);
   rpc SetJob (SetJobRequest) returns (SetJobResponse);
-	rpc DeleteJob (DeleteJobRequest) returns (DeleteJobResponse);
+  rpc DeleteJob (DeleteJobRequest) returns (DeleteJobResponse);
+  rpc RunJob (RunJobRequest) returns (RunJobResponse);
+  rpc ToggleJob (ToggleJobRequest) returns (ToggleJobResponse);
 }

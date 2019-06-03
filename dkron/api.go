@@ -176,14 +176,12 @@ func (h *HTTPTransport) jobDeleteHandler(c *gin.Context) {
 func (h *HTTPTransport) jobRunHandler(c *gin.Context) {
 	jobName := c.Param("job")
 
-	job, err := h.agent.Store.GetJob(jobName, nil)
+	// Call gRPC RunJob
+	job, err := h.agent.GRPCClient.CallRunJob(jobName)
 	if err != nil {
 		c.AbortWithError(http.StatusNotFound, err)
 		return
 	}
-
-	ex := NewExecution(job.Name)
-	h.agent.RunQuery(ex)
 
 	c.Header("Location", c.Request.RequestURI)
 	c.Status(http.StatusAccepted)
@@ -238,13 +236,15 @@ func (h *HTTPTransport) jobToggleHandler(c *gin.Context) {
 		return
 	}
 
+	// Toggle job status
 	job.Disabled = !job.Disabled
-	if err := h.agent.Store.SetJob(job, false); err != nil {
-		c.AbortWithError(http.StatusPreconditionFailed, err)
+
+	// Call gRPC SetJob
+	if err := h.agent.GRPCClient.CallSetJob(job); err != nil {
+		c.AbortWithError(422, err)
 		return
 	}
 
-	h.agent.SchedulerRestart()
 	c.Header("Location", c.Request.RequestURI)
 	renderJSON(c, http.StatusOK, job)
 }

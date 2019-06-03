@@ -11,6 +11,16 @@ import (
 	"google.golang.org/grpc"
 )
 
+type DkronGRPCClient interface {
+	Connect(string) (*grpc.ClientConn, error)
+	CallExecutionDone(string, *Execution) error
+	CallGetJob(string, string) (*Job, error)
+	CallSetJob(*Job) error
+	CallDeleteJob(string) (*Job, error)
+	Leave(string) error
+	CallRunJob(string) (*Job, error)
+}
+
 type GRPCClient struct {
 	dialOpt []grpc.DialOption
 	agent   *Agent
@@ -172,12 +182,48 @@ func (grpcc *GRPCClient) CallDeleteJob(jobName string) (*Job, error) {
 	res, err := d.DeleteJob(context.Background(), &proto.DeleteJobRequest{
 		JobName: jobName,
 	})
-	job := NewJobFromProto(res.Job)
 	if err != nil {
 		log.WithFields(logrus.Fields{
 			"error": err,
 		}).Warning("grpc: Error calling SetJob")
 		return nil, err
 	}
+
+	job := NewJobFromProto(res.Job)
+
+	return job, nil
+}
+
+// CallRunJob calls the leader passing the job name
+func (grpcc *GRPCClient) CallRunJob(jobName string) (*Job, error) {
+	var conn *grpc.ClientConn
+
+	addr := grpcc.agent.raft.Leader()
+
+	// Initiate a connection with the server
+	conn, err := grpcc.Connect(string(addr))
+	if err != nil {
+		log.WithFields(logrus.Fields{
+			"err":         err,
+			"server_addr": addr,
+		}).Error("grpc: error dialing.")
+		return nil, err
+	}
+	defer conn.Close()
+
+	// Synchronous call
+	d := proto.NewDkronClient(conn)
+	res, err := d.RunJob(context.Background(), &proto.RunJobRequest{
+		JobName: jobName,
+	})
+	if err != nil {
+		log.WithFields(logrus.Fields{
+			"error": err,
+		}).Warning("grpc: Error calling SetJob")
+		return nil, err
+	}
+
+	job := NewJobFromProto(res.Job)
+
 	return job, nil
 }

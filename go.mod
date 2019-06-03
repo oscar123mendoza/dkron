@@ -66,7 +66,7 @@ require (
 	github.com/shurcooL/httpfs v0.0.0-20181222201310-74dc9339e414 // indirect
 	github.com/shurcooL/vfsgen v0.0.0-20181202132449-6a9ea43bcacd // indirect
 	github.com/sirupsen/logrus v1.2.0
-	github.com/soheilhy/cmux v0.1.4 // indirect
+	github.com/soheilhy/cmux v0.1.4
 	github.com/spf13/afero v0.0.0-20171008182726-e67d870304c4 // indirect
 	github.com/spf13/cast v1.1.0 // indirect
 	github.com/spf13/cobra v0.0.3

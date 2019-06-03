@@ -22,6 +22,7 @@ import (
 	raftboltdb "github.com/hashicorp/raft-boltdb"
 	"github.com/hashicorp/serf/serf"
 	"github.com/sirupsen/logrus"
+	"github.com/soheilhy/cmux"
 	"github.com/victorcoder/dkron/dkron/tcp"
 )
 
@@ -167,7 +168,7 @@ func (a *Agent) Stop() error {
 	return nil
 }
 
-func (a *Agent) setupRaft() error {
+func (a *Agent) setupRaft(raftl net.Listener) error {
 	if a.config.BootstrapExpect > 0 {
 		if a.config.BootstrapExpect == 1 {
 			a.config.Bootstrap = true
@@ -175,9 +176,12 @@ func (a *Agent) setupRaft() error {
 	}
 	// Create a transport layer
 	// TODO: Get rpc address from config
-	addr := &net.TCPAddr{IP: a.serf.LocalMember().Addr, Port: a.config.AdvertiseRPCPort}
+	//addr := &net.TCPAddr{IP: a.serf.LocalMember().Addr, Port: a.config.AdvertiseRPCPort}
 	rl := tcp.NewTransport()
-	err := rl.Open(addr.String())
+	err := rl.Open(raftl)
+	if err != nil {
+		log.Fatal(err)
+	}
 	//rl := NewRaftLayer(addr)
 	//a.raftLayer = rl
 	transport := raft.NewNetworkTransport(rl, 3, raftTimeout, os.Stdout) //raft.NewTCPTransport(addr.String(), addr, 3, raftTimeout, os.Stdout)
@@ -472,16 +476,33 @@ func (a *Agent) StartServer() {
 	}
 	a.HTTPTransport.ServeHTTP()
 
+	// Create a listener at the desired port.
+	// TODO Fix get address
+	addr := fmt.Sprintf("%s:%d", a.serf.LocalMember().Addr, a.config.RPCPort)
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Create a cmux object.
+	tcpm := cmux.New(l)
+
+	// Declare the match for different services required.
+	grpcl := tcpm.MatchWithWriters(
+		cmux.HTTP2MatchHeaderFieldSendSettings("content-type", "application/grpc"))
+	raftl := tcpm.Match(cmux.Any())
+
 	if a.GRPCServer == nil {
 		a.GRPCServer = NewGRPCServer(a)
 	}
-	if err := a.GRPCServer.Serve(); err != nil {
+	if err := a.GRPCServer.Serve(grpcl); err != nil {
 		log.WithError(err).Fatal("agent: RPC server failed to start")
 	}
 
-	if err := a.setupRaft(); err != nil {
+	if err := a.setupRaft(raftl); err != nil {
 		log.WithError(err).Fatal("agent: Raft layer failed to start")
 	}
+	go tcpm.Serve()
 
 	go a.monitorLeadership()
 }
