@@ -1,132 +1,103 @@
 package dkron
 
 import (
-	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/hashicorp/raft"
 )
 
-// RaftLayer implements the raft.StreamLayer interface,
-// so that we can use a single RPC layer for Raft and Dkron
+// RaftLayer is the network layer for internode communications.
 type RaftLayer struct {
-	// Addr is the listener address to return
-	addr net.Addr
+	ln net.Listener
 
-	// connCh is used to accept connections
-	connCh chan net.Conn
-
-	// TLS wrapper
-	//tlsWrap     tlsutil.Wrapper
-	tlsWrapLock sync.RWMutex
-
-	// Tracks if we are closed
-	closed    bool
-	closeCh   chan struct{}
-	closeLock sync.Mutex
+	certFile        string // Path to local X.509 cert.
+	certKey         string // Path to corresponding X.509 key.
+	remoteEncrypted bool   // Remote nodes use encrypted communication.
+	skipVerify      bool   // Skip verification of remote node certs.
 }
 
-// NewRaftLayer is used to initialize a new RaftLayer which can
-// be used as a StreamLayer for Raft. If a tlsConfig is provided,
-// then the connection will use TLS.
-func NewRaftLayer(addr net.Addr) *RaftLayer {
-	layer := &RaftLayer{
-		addr:   addr,
-		connCh: make(chan net.Conn),
-		//tlsWrap: tlsWrap,
-		closeCh: make(chan struct{}),
-	}
-	return layer
+// NewRaftLayer returns an initialized unecrypted RaftLayer.
+func NewRaftLayer() *RaftLayer {
+	return &RaftLayer{}
 }
 
-// Handoff is used to hand off a connection to the
-// RaftLayer. This allows it to be Accept()'ed
-func (l *RaftLayer) Handoff(ctx context.Context, c net.Conn) error {
-	select {
-	case l.connCh <- c:
-		return nil
-	case <-l.closeCh:
-		return fmt.Errorf("Raft RPC layer closed")
-	case <-ctx.Done():
-		return nil
+// NewTLSRaftLayer returns an initialized TLS-ecrypted RaftLayer.
+func NewTLSRaftLayer(certFile, keyPath string, skipVerify bool) *RaftLayer {
+	return &RaftLayer{
+		certFile:        certFile,
+		certKey:         keyPath,
+		remoteEncrypted: true,
+		skipVerify:      skipVerify,
 	}
 }
 
-// Accept is used to return connection which are
-// dialed to be used with the Raft layer
-func (l *RaftLayer) Accept() (net.Conn, error) {
-	select {
-	case conn := <-l.connCh:
-		return conn, nil
-	case <-l.closeCh:
-		return nil, fmt.Errorf("Raft RPC layer closed")
+// Open opens the RaftLayer, binding to the supplied address.
+func (t *RaftLayer) Open(l net.Listener) error {
+	// ln, err := net.Listen("tcp", addr)
+	// if err != nil {
+	// 	return err
+	// }
+	if t.certFile != "" {
+		config, err := createTLSConfig(t.certFile, t.certKey)
+		if err != nil {
+			return err
+		}
+		l = tls.NewListener(l, config)
 	}
-}
 
-// Close is used to stop listening for Raft connections
-func (l *RaftLayer) Close() error {
-	l.closeLock.Lock()
-	defer l.closeLock.Unlock()
-
-	if !l.closed {
-		l.closed = true
-		close(l.closeCh)
-	}
+	t.ln = l
 	return nil
 }
 
-// // getTLSWrapper is used to retrieve the current TLS wrapper
-// func (l *RaftLayer) getTLSWrapper() tlsutil.Wrapper {
-// 	l.tlsWrapLock.RLock()
-// 	defer l.tlsWrapLock.RUnlock()
-// 	return l.tlsWrap
-// }
+// Dial opens a network connection.
+func (t *RaftLayer) Dial(addr raft.ServerAddress, timeout time.Duration) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: timeout}
 
-// // ReloadTLS swaps the TLS wrapper. This is useful when upgrading or
-// // downgrading TLS connections.
-// func (l *RaftLayer) ReloadTLS(tlsWrap tlsutil.Wrapper) {
-// 	l.tlsWrapLock.Lock()
-// 	defer l.tlsWrapLock.Unlock()
-// 	l.tlsWrap = tlsWrap
-// }
+	var err error
+	var conn net.Conn
+	if t.remoteEncrypted {
+		conf := &tls.Config{
+			InsecureSkipVerify: t.skipVerify,
+		}
+		fmt.Println("doing a TLS dial")
+		conn, err = tls.DialWithDialer(dialer, "tcp", string(addr), conf)
+	} else {
+		conn, err = dialer.Dial("tcp", string(addr))
+	}
 
-// Addr is used to return the address of the listener
-func (l *RaftLayer) Addr() net.Addr {
-	return l.addr
+	return conn, err
 }
 
-// Dial is used to create a new outgoing connection
-func (l *RaftLayer) Dial(address raft.ServerAddress, timeout time.Duration) (net.Conn, error) {
-	conn, err := net.DialTimeout("tcp", string(address), timeout)
+// Accept waits for the next connection.
+func (t *RaftLayer) Accept() (net.Conn, error) {
+	c, err := t.ln.Accept()
+	if err != nil {
+		fmt.Println("error accepting: ", err.Error())
+	}
+	return c, err
+}
+
+// Close closes the RaftLayer
+func (t *RaftLayer) Close() error {
+	return t.ln.Close()
+}
+
+// Addr returns the binding address of the RaftLayer.
+func (t *RaftLayer) Addr() net.Addr {
+	return t.ln.Addr()
+}
+
+// createTLSConfig returns a TLS config from the given cert and key.
+func createTLSConfig(certFile, keyFile string) (*tls.Config, error) {
+	var err error
+	config := &tls.Config{}
+	config.Certificates = make([]tls.Certificate, 1)
+	config.Certificates[0], err = tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return nil, err
 	}
-
-	// tlsWrapper := l.getTLSWrapper()
-
-	// // Check for tls mode
-	// if tlsWrapper != nil {
-	// 	// Switch the connection into TLS mode
-	// 	if _, err := conn.Write([]byte{byte(pool.RpcTLS)}); err != nil {
-	// 		conn.Close()
-	// 		return nil, err
-	// 	}
-
-	// 	// Wrap the connection in a TLS client
-	// 	conn, err = tlsWrapper(conn)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// }
-
-	// Write the Raft byte to set the mode
-	// _, err = conn.Write([]byte{byte(0x02)})
-	// if err != nil {
-	// 	conn.Close()
-	// 	return nil, err
-	// }
-	return conn, err
+	return config, nil
 }

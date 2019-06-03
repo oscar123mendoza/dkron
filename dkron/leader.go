@@ -226,7 +226,7 @@ func (a *Agent) addRaftPeer(m serf.Member, parts *serverParts) error {
 
 	if m.Name == a.config.NodeName {
 		if l := len(configFuture.Configuration().Servers); l < 3 {
-			//log.WithField("peer", m.Name).Debug("dkron: Skipping self join check since the cluster is too small")
+			log.WithField("peer", m.Name).Debug("dkron: Skipping self join check since the cluster is too small")
 			return nil
 		}
 	}

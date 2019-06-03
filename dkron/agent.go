@@ -23,7 +23,6 @@ import (
 	"github.com/hashicorp/serf/serf"
 	"github.com/sirupsen/logrus"
 	"github.com/soheilhy/cmux"
-	"github.com/victorcoder/dkron/dkron/tcp"
 )
 
 const (
@@ -175,16 +174,14 @@ func (a *Agent) setupRaft(raftl net.Listener) error {
 		}
 	}
 	// Create a transport layer
-	// TODO: Get rpc address from config
-	//addr := &net.TCPAddr{IP: a.serf.LocalMember().Addr, Port: a.config.AdvertiseRPCPort}
-	rl := tcp.NewTransport()
+	rl := NewRaftLayer()
 	err := rl.Open(raftl)
 	if err != nil {
 		log.Fatal(err)
 	}
 	//rl := NewRaftLayer(addr)
 	//a.raftLayer = rl
-	transport := raft.NewNetworkTransport(rl, 3, raftTimeout, os.Stdout) //raft.NewTCPTransport(addr.String(), addr, 3, raftTimeout, os.Stdout)
+	transport := raft.NewNetworkTransport(rl, 3, raftTimeout, os.Stdout)
 	a.raftTransport = transport
 
 	// if err := os.MkdirAll("raft.db", 0700); err != nil {
