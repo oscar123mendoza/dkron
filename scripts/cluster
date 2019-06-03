@@ -8,4 +8,4 @@ scripts/run agent --server --node-name=node2 --bind-addr=0.0.0.0:8947 \
 
 scripts/run agent --server --node-name=node3 --bind-addr=0.0.0.0:8948 \
    --rpc-port=6870 --data-dir=node3.data --http-addr=:8082 \
-   --join=192.168.1.134:8946 --log-level=debug --bootstrap-expect=3
+   --join=127.0.0.1:8946 --log-level=debug --bootstrap-expect=3
