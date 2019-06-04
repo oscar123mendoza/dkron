@@ -537,7 +537,7 @@ func (a *Agent) ListServers() []serf.Member {
 	members := []serf.Member{}
 
 	for _, member := range a.serf.Members() {
-		if key, ok := member.Tags["dkron_server"]; ok {
+		if key, ok := member.Tags["server"]; ok {
 			if key == "true" && member.Status == serf.StatusAlive {
 				members = append(members, member)
 			}

@@ -19,6 +19,7 @@ import (
 var (
 	ErrExecutionDoneForDeletedJob = errors.New("rpc: Received execution done for a deleted job")
 	ErrRPCDialing                 = errors.New("rpc: Error dialing, verify the network connection to the server")
+	ErrNotLeader                  = errors.New("Error, server is not leader, this operation should be run on the leader")
 )
 
 type DkronGRPCServer interface {
@@ -139,9 +140,10 @@ func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.E
 
 	// Get the leader address and compare with the current node address.
 	// Forward the request to the leader in case current node is not the leader.
-	addr := grpcs.agent.raft.Leader()
-	if string(addr) != grpcs.agent.getRPCAddr() {
+	if !grpcs.agent.IsLeader() {
+		addr := grpcs.agent.raft.Leader()
 		grpcs.agent.GRPCClient.CallExecutionDone(string(addr), NewExecutionFromProto(execDoneReq.Execution))
+		return nil, ErrNotLeader
 	}
 
 	// This is the leader at this point, so process the execution, encode the value and apply the log to the cluster.

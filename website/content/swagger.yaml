@@ -283,7 +283,7 @@ definitions:
           type: string
         readOnly: false
         example:
-          dkron_server: "true"
+          server: "true"
       retries:
         type: integer
         description: "Number of times to retry a failed job execution"

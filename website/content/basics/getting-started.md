@@ -54,7 +54,7 @@ dkron agent --server
 Time to add the first job:
 
 {{% notice note %}}
-This job will only run in just one `dkron_server` node due to the node count in the tag. Refer to the [target node spec](/usage/target-nodes-spec) for details.
+This job will only run in just one `server` node due to the node count in the tag. Refer to the [target node spec](/usage/target-nodes-spec) for details.
 {{% /notice %}}
 
 ```bash
@@ -66,7 +66,7 @@ curl localhost:8080/v1/jobs -XPOST -d '{
   "owner_email": "platform@example.com",
   "disabled": false,
   "tags": {
-    "dkron_server": "true:1"
+    "server": "true:1"
   },
   "concurrency": "allow",
   "executor": "shell",

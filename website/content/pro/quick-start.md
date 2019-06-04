@@ -31,7 +31,7 @@ curl localhost:8080/v1/jobs -XPOST -d '{
   "owner_email": "platform@example.com",
   "disabled": false,
   "tags": {
-    "dkron_server": "true"
+    "server": "true"
   },
   "concurrency": "allow",
   "executor": "shell",

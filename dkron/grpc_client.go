@@ -54,21 +54,25 @@ func (grpcc *GRPCClient) CallExecutionDone(addr string, execution *Execution) er
 	var conn *grpc.ClientConn
 
 	conn, err := grpcc.Connect(addr)
+	defer conn.Close()
 	if err != nil {
-		log.WithFields(logrus.Fields{
-			"err":         err,
+		log.WithError(err).WithFields(logrus.Fields{
+			"method":      "CallExecutionDone",
 			"server_addr": addr,
 		}).Error("grpc: error dialing.")
+		return err
 	}
-	defer conn.Close()
 
 	d := proto.NewDkronClient(conn)
 	edr, err := d.ExecutionDone(context.Background(), &proto.ExecutionDoneRequest{Execution: execution.ToProto()})
 	if err != nil {
-		log.WithFields(logrus.Fields{
-			"error": err,
-		}).Warning("grpc: Error calling ExecutionDone")
-		return err
+		if err == ErrNotLeader {
+			log.WithError(err).Info("grpc: ExecutionDone forwarded to the leader")
+			return nil
+		} else {
+			log.WithError(err).Error("grpc: Error calling ExecutionDone")
+			return err
+		}
 	}
 	log.Debug("grpc: from: ", edr.From)
 
@@ -81,13 +85,14 @@ func (grpcc *GRPCClient) CallGetJob(addr, jobName string) (*Job, error) {
 
 	// Initiate a connection with the server
 	conn, err := grpcc.Connect(addr)
+	defer conn.Close()
 	if err != nil {
-		log.WithFields(logrus.Fields{
-			"err":         err,
+		log.WithError(err).WithFields(logrus.Fields{
+			"method":      "CallGetJob",
 			"server_addr": addr,
 		}).Error("grpc: error dialing.")
+		return nil, err
 	}
-	defer conn.Close()
 
 	// Synchronous call
 	d := proto.NewDkronClient(conn)
@@ -108,8 +113,8 @@ func (grpcc *GRPCClient) Leave(addr string) error {
 	// Initiate a connection with the server
 	conn, err := grpcc.Connect(addr)
 	if err != nil {
-		log.WithFields(logrus.Fields{
-			"err":         err,
+		log.WithError(err).WithFields(logrus.Fields{
+			"method":      "Leave",
 			"server_addr": addr,
 		}).Error("grpc: error dialing.")
 		return err
@@ -138,8 +143,8 @@ func (grpcc *GRPCClient) CallSetJob(job *Job) error {
 	// Initiate a connection with the server
 	conn, err := grpcc.Connect(string(addr))
 	if err != nil {
-		log.WithFields(logrus.Fields{
-			"err":         err,
+		log.WithError(err).WithFields(logrus.Fields{
+			"method":      "CallSetJob",
 			"server_addr": addr,
 		}).Error("grpc: error dialing.")
 		return err
@@ -169,8 +174,8 @@ func (grpcc *GRPCClient) CallDeleteJob(jobName string) (*Job, error) {
 	// Initiate a connection with the server
 	conn, err := grpcc.Connect(string(addr))
 	if err != nil {
-		log.WithFields(logrus.Fields{
-			"err":         err,
+		log.WithError(err).WithFields(logrus.Fields{
+			"method":      "CallDeleteJob",
 			"server_addr": addr,
 		}).Error("grpc: error dialing.")
 		return nil, err
@@ -203,8 +208,8 @@ func (grpcc *GRPCClient) CallRunJob(jobName string) (*Job, error) {
 	// Initiate a connection with the server
 	conn, err := grpcc.Connect(string(addr))
 	if err != nil {
-		log.WithFields(logrus.Fields{
-			"err":         err,
+		log.WithError(err).WithFields(logrus.Fields{
+			"method":      "CallRunJob",
 			"server_addr": addr,
 		}).Error("grpc: error dialing.")
 		return nil, err
