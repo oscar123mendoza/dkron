@@ -19,6 +19,8 @@ func setupAPITest(t *testing.T) (a *Agent) {
 	c.NodeName = "test"
 	c.Server = true
 	c.LogLevel = logLevel
+	c.BootstrapExpect = 1
+	c.DevMode = true
 
 	a = NewAgent(c, nil)
 	a.Start()

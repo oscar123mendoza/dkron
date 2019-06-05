@@ -47,6 +47,10 @@ type Config struct {
 	// DataDir is the directory to store our state in
 	DataDir string `mapstructure:"data-dir"`
 
+	// DevMode is used for development purposes only and limits the
+	// use of persistence or state.
+	DevMode bool
+
 	// ReconcileInterval controls how often we reconcile the strongly
 	// consistent store with the Serf info. This is used to handle nodes
 	// that are force removed, as well as intermittent unavailability during

@@ -182,42 +182,47 @@ func (a *Agent) setupRaft(raftl net.Listener) error {
 	if err != nil {
 		log.Fatal(err)
 	}
-	//rl := NewRaftLayer(addr)
-	//a.raftLayer = rl
+	a.raftLayer = rl
+
 	transport := raft.NewNetworkTransport(rl, 3, raftTimeout, os.Stdout)
 	a.raftTransport = transport
 
-	// if err := os.MkdirAll("raft.db", 0700); err != nil {
-	// 	return err
-	// }
-
 	config := raft.DefaultConfig()
 
-	// Create the snapshot store. This allows the Raft to truncate the log to
-	// mitigate the issue of having an unbounded replicated log.
-	snapshots, err := raft.NewFileSnapshotStore(filepath.Join(a.config.DataDir, "raft"), 3, os.Stderr)
-	if err != nil {
-		return fmt.Errorf("file snapshot store: %s", err)
-	}
+	// Build an all in-memory setup for dev mode, otherwise prepare a full
+	// disk-based setup.
+	var logStore raft.LogStore
+	var stableStore raft.StableStore
+	var snapshots raft.SnapshotStore
+	if a.config.DevMode {
+		store := raft.NewInmemStore()
+		a.raftInmem = store
+		stableStore = store
+		logStore = store
+		snapshots = raft.NewDiscardSnapshotStore()
+	} else {
+		// Create the BoltDB backend
+		s, err := raftboltdb.NewBoltStore(filepath.Join(a.config.DataDir, "raft", "raft.db"))
+		if err != nil {
+			return fmt.Errorf("error creating new badger store: %s", err)
+		}
+		a.raftStore = s
+		stableStore = s
 
-	// Create the log store and stable store. This is the store used to keep
-	// the raft logs.
-	stableStore, err := raftboltdb.NewBoltStore(filepath.Join(a.config.DataDir, "raft", "raft.db"))
-	// stableStore, err := raftbadgerdb.New(raftbadgerdb.Options{
-	// 	Path:       filepath.Join("raft.db"),
-	// 	ValueLogGC: true,
-	// })
-	if err != nil {
-		return fmt.Errorf("error creating new badger store: %s", err)
-	}
-	logStore := stableStore
-	a.raftStore = stableStore
+		// Wrap the store in a LogCache to improve performance
+		cacheStore, err := raft.NewLogCache(raftLogCacheSize, s)
+		if err != nil {
+			s.Close()
+			return err
+		}
+		logStore = cacheStore
 
-	// Wrap the store in a LogCache to improve performance
-	cacheStore, err := raft.NewLogCache(raftLogCacheSize, stableStore)
-	if err != nil {
-		stableStore.Close()
-		return err
+		// Create the snapshot store. This allows the Raft to truncate the log to
+		// mitigate the issue of having an unbounded replicated log.
+		snapshots, err = raft.NewFileSnapshotStore(filepath.Join(a.config.DataDir, "raft"), 3, os.Stderr)
+		if err != nil {
+			return fmt.Errorf("file snapshot store: %s", err)
+		}
 	}
 
 	config.LocalID = raft.ServerID(a.config.NodeName)
@@ -238,7 +243,7 @@ func (a *Agent) setupRaft(raftl net.Listener) error {
 					},
 				},
 			}
-			if err := raft.BootstrapCluster(config, cacheStore, stableStore, snapshots, transport, configuration); err != nil {
+			if err := raft.BootstrapCluster(config, logStore, stableStore, snapshots, transport, configuration); err != nil {
 				return err
 			}
 		}
@@ -247,7 +252,7 @@ func (a *Agent) setupRaft(raftl net.Listener) error {
 	// Instantiate the Raft systems. The second parameter is a finite state machine
 	// which stores the actual kv pairs and is operated upon through Apply().
 	fsm := NewFSM(a.Store)
-	rft, err := raft.NewRaft(config, fsm, cacheStore, stableStore, snapshots, transport)
+	rft, err := raft.NewRaft(config, fsm, logStore, stableStore, snapshots, transport)
 	if err != nil {
 		return fmt.Errorf("new raft: %s", err)
 	}
@@ -462,7 +467,7 @@ func (a *Agent) StartServer() {
 				log.WithError(err).WithField("dir", a.config.DataDir).Fatal("Error Creating Dir")
 			}
 		}
-		s, err := NewStore(a, filepath.Join(a.config.DataDir, "badger.db"))
+		s, err := NewStore(a, filepath.Join(a.config.DataDir, a.config.NodeName))
 		if err != nil {
 			log.WithError(err).Fatal("dkron: Error initializing store")
 		}

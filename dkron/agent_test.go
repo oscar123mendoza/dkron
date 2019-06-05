@@ -31,7 +31,7 @@ func TestAgentCommand_runForElection(t *testing.T) {
 	c.Server = true
 	c.LogLevel = logLevel
 	c.BootstrapExpect = 3
-	c.DataDir = "../test1.data"
+	c.DevMode = true
 
 	a1 := NewAgent(c, nil)
 	if err := a1.Start(); err != nil {
@@ -56,7 +56,7 @@ func TestAgentCommand_runForElection(t *testing.T) {
 	c.Server = true
 	c.LogLevel = logLevel
 	c.BootstrapExpect = 3
-	c.DataDir = "../test2.data"
+	c.DevMode = true
 
 	a2 := NewAgent(c, nil)
 	a2.Start()
@@ -69,10 +69,12 @@ func TestAgentCommand_runForElection(t *testing.T) {
 	c.Server = true
 	c.LogLevel = logLevel
 	c.BootstrapExpect = 3
-	c.DataDir = "../test3.data"
+	c.DevMode = true
 
 	a3 := NewAgent(c, nil)
 	a3.Start()
+
+	time.Sleep(2 * time.Second)
 
 	// Send a shutdown request
 	a1.Stop()
@@ -97,7 +99,7 @@ func Test_processFilteredNodes(t *testing.T) {
 	c.Server = true
 	c.LogLevel = logLevel
 	c.Tags = map[string]string{"tag": "test"}
-	c.DataDir = "../test1.data"
+	c.DevMode = true
 
 	a1 := NewAgent(c, nil)
 	a1.Start()
@@ -112,7 +114,7 @@ func Test_processFilteredNodes(t *testing.T) {
 	c.Server = true
 	c.LogLevel = logLevel
 	c.Tags = map[string]string{"tag": "test"}
-	c.DataDir = "../test2.data"
+	c.DevMode = true
 
 	a2 := NewAgent(c, nil)
 	a2.Start()
@@ -150,6 +152,7 @@ func TestEncrypt(t *testing.T) {
 	c.Tags = map[string]string{"role": "test"}
 	c.EncryptKey = "kPpdjphiipNSsjd4QHWbkA=="
 	c.LogLevel = logLevel
+	c.DevMode = true
 
 	a := NewAgent(c, nil)
 	a.Start()
@@ -169,6 +172,7 @@ func Test_getRPCAddr(t *testing.T) {
 	c.Server = true
 	c.Tags = map[string]string{"role": "test"}
 	c.LogLevel = logLevel
+	c.DevMode = true
 
 	a := NewAgent(c, nil)
 	a.Start()
