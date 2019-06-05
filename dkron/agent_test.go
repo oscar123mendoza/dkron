@@ -30,7 +30,7 @@ func TestAgentCommand_runForElection(t *testing.T) {
 	c.NodeName = a1Name
 	c.Server = true
 	c.LogLevel = logLevel
-	c.BootstrapExpect = 1
+	c.BootstrapExpect = 3
 	c.DataDir = "../test1.data"
 
 	a1 := NewAgent(c, nil)
@@ -80,6 +80,7 @@ func TestAgentCommand_runForElection(t *testing.T) {
 	// Wait until a follower steps as leader
 	time.Sleep(2 * time.Second)
 	assert.True(t, (a2.IsLeader() || a3.IsLeader()))
+	log.Info(a3.IsLeader())
 
 	a2.Stop()
 	a3.Stop()
