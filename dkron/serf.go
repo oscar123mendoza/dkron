@@ -21,7 +21,7 @@ func (a *Agent) nodeJoin(me serf.MemberEvent) {
 			log.WithField("member", m.Name).Warn("non-server in gossip pool")
 			continue
 		}
-		log.Info("adding server", "server", parts)
+		log.WithField("server", parts.Name).Info("adding server")
 
 		// Check if this server is known
 		found := false
@@ -68,7 +68,7 @@ func (a *Agent) maybeBootstrap() {
 		panic("neither raftInmem or raftStore is initialized")
 	}
 	if err != nil {
-		log.Error("failed to read last raft index", "error", err)
+		log.WithError(err).Error("failed to read last raft index")
 		return
 	}
 
@@ -92,11 +92,11 @@ func (a *Agent) maybeBootstrap() {
 			continue
 		}
 		if p.Expect != 0 && p.Expect != a.config.BootstrapExpect {
-			log.Error("peer has a conflicting expect value. All nodes should expect the same number", "member", member)
+			log.WithField("member", member).Error("peer has a conflicting expect value. All nodes should expect the same number")
 			return
 		}
 		if p.Bootstrap {
-			log.Error("peer has bootstrap mode. Expect disabled", "member", member)
+			log.WithField("member", member).Error("peer has bootstrap mode. Expect disabled")
 			return
 		}
 		if valid {
@@ -133,7 +133,7 @@ func (a *Agent) maybeBootstrap() {
 		"peers", strings.Join(addrs, ","))
 	future := a.raft.BootstrapCluster(configuration)
 	if err := future.Error(); err != nil {
-		log.Error("agent: failed to bootstrap cluster", "error", err)
+		log.WithError(err).Error("agent: failed to bootstrap cluster")
 	}
 
 	// Bootstrapping complete, or failed for some reason, don't enter this again
