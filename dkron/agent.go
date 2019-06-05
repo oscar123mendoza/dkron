@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/abronan/leadership"
 	metrics "github.com/armon/go-metrics"
 	"github.com/hashicorp/memberlist"
 	"github.com/hashicorp/raft"
@@ -62,7 +61,6 @@ type Agent struct {
 	config     *Config
 	eventCh    chan serf.Event
 	sched      *Scheduler
-	candidate  *leadership.Candidate
 	ready      bool
 	shutdownCh chan struct{}
 
@@ -152,8 +150,9 @@ func (a *Agent) Start() error {
 func (a *Agent) Stop() error {
 	log.Info("agent: Called member stop, now stopping")
 
-	if a.config.Server && a.candidate != nil {
-		a.candidate.Stop()
+	if a.config.Server {
+		a.raft.Shutdown()
+		a.Store.Shutdown()
 	}
 
 	if a.config.Server && a.sched.Started {
@@ -161,6 +160,10 @@ func (a *Agent) Stop() error {
 	}
 
 	if err := a.serf.Leave(); err != nil {
+		return err
+	}
+
+	if err := a.serf.Shutdown(); err != nil {
 		return err
 	}
 
@@ -593,13 +596,13 @@ func (a *Agent) eventLoop() {
 				// serfEventHandler is used to handle events from the serf cluster
 				switch e.EventType() {
 				case serf.EventMemberJoin:
-					a.nodeJoin(e.(serf.MemberEvent))
-					a.localMemberEvent(e.(serf.MemberEvent))
+					a.nodeJoin(me)
+					a.localMemberEvent(me)
 				case serf.EventMemberLeave, serf.EventMemberFailed:
-					a.nodeFailed(e.(serf.MemberEvent))
-					a.localMemberEvent(e.(serf.MemberEvent))
+					a.nodeFailed(me)
+					a.localMemberEvent(me)
 				case serf.EventMemberReap:
-					a.localMemberEvent(e.(serf.MemberEvent))
+					a.localMemberEvent(me)
 				case serf.EventMemberUpdate, serf.EventUser, serf.EventQuery: // Ignore
 				default:
 					log.WithField("event", e.String()).Warn("agent: Unhandled serf event")
@@ -609,8 +612,6 @@ func (a *Agent) eventLoop() {
 				if a.PeerUpdaterFunc != nil {
 					a.PeerUpdaterFunc(a.GetPeers()...)
 				}
-
-				a.localMemberEvent(me)
 			}
 
 			if e.EventType() == serf.EventQuery {

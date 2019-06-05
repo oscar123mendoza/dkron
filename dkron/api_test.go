@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abronan/valkeyrie/store"
 	"github.com/hashicorp/serf/testutil"
 	"github.com/stretchr/testify/assert"
 )
@@ -20,8 +19,6 @@ func setupAPITest(t *testing.T) (a *Agent) {
 	c.NodeName = "test"
 	c.Server = true
 	c.LogLevel = logLevel
-	c.Backend = store.Backend(backend)
-	c.BackendMachines = []string{backendMachine}
 
 	a = NewAgent(c, nil)
 	a.Start()
@@ -33,9 +30,6 @@ func setupAPITest(t *testing.T) (a *Agent) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	time.Sleep(1 * time.Second)
-
-	// clean up the keyspace to ensure clean runs
-	a.Store.Client().DeleteTree("dkron-test")
 
 	return
 }

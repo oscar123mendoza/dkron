@@ -1,38 +1,30 @@
 package dkron
 
 import (
-	"os"
 	"testing"
 	"time"
 
-	"github.com/abronan/valkeyrie/store"
 	"github.com/hashicorp/serf/testutil"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestGRPCExecutionDone(t *testing.T) {
-	s := NewStore(store.Backend(backend), []string{backendMachine}, nil, "dkron", nil)
 	viper.Reset()
-
-	// Cleanup everything
-	err := s.Client().DeleteTree("dkron")
-	if err != nil {
-		t.Logf("error cleaning up: %s", err)
-	}
 
 	aAddr := testutil.GetBindAddr().String()
 
 	c := DefaultConfig()
 	c.BindAddr = aAddr
-	c.BackendMachines = []string{backendMachine}
 	c.NodeName = "test1"
 	c.Server = true
 	c.LogLevel = logLevel
-	c.Backend = store.Backend(backend)
-	c.BackendMachines = []string{os.Getenv("DKRON_BACKEND_MACHINE")}
 
 	a := NewAgent(c, nil)
+	s, err := NewStore(a, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	a.Start()
 
 	time.Sleep(2 * time.Second)
@@ -59,7 +51,7 @@ func TestGRPCExecutionDone(t *testing.T) {
 		Output:     []byte("type"),
 	}
 
-	rc := NewGRPCClient(nil)
+	rc := NewGRPCClient(nil, a)
 	rc.CallExecutionDone(a.getRPCAddr(), testExecution)
 	execs, _ := s.GetExecutions("test")
 

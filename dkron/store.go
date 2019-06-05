@@ -533,7 +533,7 @@ func (s *Store) unmarshalExecutions(items []*kv, stopWord string) ([]*Execution,
 	return executions, nil
 }
 
-// Removes all executions of a job
+// DeleteExecutions removes all executions of a job
 func (s *Store) DeleteExecutions(jobName string) error {
 	prefix := []byte(jobName)
 
@@ -587,4 +587,8 @@ ConflictRetry:
 	}
 
 	return ErrTooManyUpdateConflicts
+}
+
+func (s *Store) Shutdown() error {
+	return s.db.Close()
 }

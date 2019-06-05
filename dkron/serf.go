@@ -18,7 +18,7 @@ func (a *Agent) nodeJoin(me serf.MemberEvent) {
 	for _, m := range me.Members {
 		ok, parts := isServer(m)
 		if !ok {
-			log.Warn("non-server in gossip pool", "member", m.Name)
+			log.WithField("member", m.Name).Warn("non-server in gossip pool")
 			continue
 		}
 		log.Info("adding server", "server", parts)
@@ -181,7 +181,7 @@ func (a *Agent) nodeFailed(me serf.MemberEvent) {
 // consistent store if we are the current leader.
 func (a *Agent) localMemberEvent(me serf.MemberEvent) {
 	// Do nothing if we are not the leader
-	if !a.IsLeader() {
+	if !a.config.Server || !a.IsLeader() {
 		return
 	}
 
