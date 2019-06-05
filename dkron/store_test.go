@@ -8,7 +8,7 @@ import (
 )
 
 func TestStore(t *testing.T) {
-	s, err := NewStore(nil, "")
+	s, err := NewStore(nil, "test.db")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestStore(t *testing.T) {
 }
 
 func TestStore_GetLastExecutionGroup(t *testing.T) {
-	s, err := NewStore(nil, "")
+	s, err := NewStore(nil, "test.db")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -26,7 +26,7 @@ func setupAPITest(t *testing.T) (a *Agent) {
 	a.Start()
 
 	for {
-		if a.ready {
+		if a.IsLeader() {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
