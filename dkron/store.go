@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/abronan/valkeyrie/store"
 	"github.com/dgraph-io/badger"
 	"github.com/golang/protobuf/proto"
 	"github.com/sirupsen/logrus"
@@ -196,8 +195,46 @@ func (s *Store) validateTimeZone(timezone string) error {
 	return err
 }
 
-func (s *Store) AtomicJobPut(job *Job, prevJobKVPair *store.KVPair) (bool, error) {
-	return true, nil
+// SetExecutionDone saves the execution and updates the job with the corresponding
+// results
+func (s *Store) SetExecutionDone(execution *Execution) (bool, error) {
+	err := s.db.Update(func(txn *badger.Txn) error {
+		// Load the job from the store
+		job, err := s.GetJob(execution.JobName, &JobOptions{
+			ComputeStatus: true,
+		})
+
+		if err != nil {
+			if err == badger.ErrKeyNotFound {
+				log.Warning(ErrExecutionDoneForDeletedJob)
+				return ErrExecutionDoneForDeletedJob
+			}
+			log.WithError(err).Fatal(err)
+			return err
+		}
+
+		// Save the execution to store
+		if _, err := s.SetExecution(execution); err != nil {
+			return err
+		}
+
+		if execution.Success {
+			job.LastSuccess = execution.FinishedAt
+			job.SuccessCount++
+		} else {
+			job.LastError = execution.FinishedAt
+			job.ErrorCount++
+		}
+
+		if err := s.SetJob(job, false); err != nil {
+			log.WithError(err).Fatal("store: Error in SetExecutionDone")
+			return err
+		}
+
+		return nil
+	})
+
+	return true, err
 }
 
 func (s *Store) validateJob(job *Job) error {
@@ -290,13 +327,8 @@ func (s *Store) GetJobs(options *JobOptions) ([]*Job, error) {
 	return jobs, err
 }
 
-// Get a job
+// GetJob finds and return a Job from the store
 func (s *Store) GetJob(name string, options *JobOptions) (*Job, error) {
-	job, _, err := s.GetJobWithKVPair(name, options)
-	return job, err
-}
-
-func (s *Store) GetJobWithKVPair(name string, options *JobOptions) (*Job, *store.KVPair, error) {
 	var job *Job
 
 	err := s.db.View(func(txn *badger.Txn) error {
@@ -332,7 +364,7 @@ func (s *Store) GetJobWithKVPair(name string, options *JobOptions) (*Job, *store
 		return nil
 	})
 
-	return job, nil, err
+	return job, err
 }
 
 func (s *Store) DeleteJob(name string) (*Job, error) {
@@ -345,7 +377,7 @@ func (s *Store) DeleteJob(name string) (*Job, error) {
 		job = j
 
 		if err := s.DeleteExecutions(name); err != nil {
-			if err != store.ErrKeyNotFound {
+			if err != nil {
 				return err
 			}
 		}
@@ -403,7 +435,7 @@ func (s *Store) list(prefix string, checkRoot bool) ([]*kv, error) {
 	})
 
 	if err == nil && !found && checkRoot {
-		return nil, store.ErrKeyNotFound
+		return nil, badger.ErrKeyNotFound
 	}
 
 	return kvs, err
@@ -489,10 +521,10 @@ func (s *Store) SetExecution(execution *Execution) (string, error) {
 	}
 
 	execs, err := s.GetExecutions(execution.JobName)
-	if err != nil {
+	if err != nil && err != badger.ErrKeyNotFound {
 		log.WithError(err).
 			WithField("job", execution.JobName).
-			Error("store: Error no executions found for job")
+			Error("store: Error getting executions for job")
 	}
 
 	// Delete all execution results over the limit, starting from olders

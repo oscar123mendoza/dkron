@@ -101,6 +101,7 @@ func DefaultConfig() *Config {
 		DataDir:           "dkron.data",
 		Datacenter:        "dc1",
 		Region:            "global",
+		ReconcileInterval: 60 * time.Second,
 	}
 }
 

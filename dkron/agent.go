@@ -201,6 +201,13 @@ func (a *Agent) setupRaft(raftl net.Listener) error {
 		logStore = store
 		snapshots = raft.NewDiscardSnapshotStore()
 	} else {
+		// Create the snapshot store. This allows the Raft to truncate the log to
+		// mitigate the issue of having an unbounded replicated log.
+		snapshots, err = raft.NewFileSnapshotStore(filepath.Join(a.config.DataDir, "raft"), 3, os.Stderr)
+		if err != nil {
+			return fmt.Errorf("file snapshot store: %s", err)
+		}
+
 		// Create the BoltDB backend
 		s, err := raftboltdb.NewBoltStore(filepath.Join(a.config.DataDir, "raft", "raft.db"))
 		if err != nil {
@@ -216,20 +223,13 @@ func (a *Agent) setupRaft(raftl net.Listener) error {
 			return err
 		}
 		logStore = cacheStore
-
-		// Create the snapshot store. This allows the Raft to truncate the log to
-		// mitigate the issue of having an unbounded replicated log.
-		snapshots, err = raft.NewFileSnapshotStore(filepath.Join(a.config.DataDir, "raft"), 3, os.Stderr)
-		if err != nil {
-			return fmt.Errorf("file snapshot store: %s", err)
-		}
 	}
 
 	config.LocalID = raft.ServerID(a.config.NodeName)
 
 	// If we are in bootstrap or dev mode and the state is clean then we can
 	// bootstrap now.
-	if a.config.Bootstrap { /*|| a.config.DevMode*/
+	if a.config.Bootstrap || a.config.DevMode {
 		hasState, err := raft.HasExistingState(logStore, stableStore, snapshots)
 		if err != nil {
 			return err

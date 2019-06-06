@@ -9,7 +9,7 @@ import (
 
 func TestJobGetParent(t *testing.T) {
 	a := &Agent{}
-	s, err := NewStore(a, "dkron_test")
+	s, err := NewStore(a, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestJobGetParent(t *testing.T) {
 
 	ptj, err = s.GetJob(parentTestJob.Name, nil)
 	assert.NoError(t, err)
-	assert.Equal(t, []string{}, ptj.DependentJobs)
+	assert.Nil(t, ptj.DependentJobs)
 }
 
 func TestJobGetNext(t *testing.T) {

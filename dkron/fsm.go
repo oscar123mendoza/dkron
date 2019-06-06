@@ -5,7 +5,6 @@ import (
 	"io"
 	"sync"
 
-	"github.com/abronan/valkeyrie/store"
 	"github.com/golang/protobuf/proto"
 	"github.com/hashicorp/raft"
 	dkronpb "github.com/victorcoder/dkron/proto"
@@ -85,43 +84,9 @@ func (d *dkronFSM) applyExecutionDone(buf []byte) interface{} {
 	}
 	execution := NewExecutionFromProto(execDoneReq.Execution)
 
-Retry:
-	// Load the job from the store
-	job, jkv, err := d.store.GetJobWithKVPair(execDoneReq.Execution.JobName, &JobOptions{
-		ComputeStatus: true,
-	})
-	if err != nil {
-		if err == store.ErrKeyNotFound {
-			log.Warning(ErrExecutionDoneForDeletedJob)
-			return ErrExecutionDoneForDeletedJob
-		}
-		log.Fatal("fsm:", err)
-		return err
-	}
+	_, err := d.store.SetExecutionDone(execution)
 
-	// Save the execution to store
-	if _, err := d.store.SetExecution(execution); err != nil {
-		return err
-	}
-
-	if execution.Success {
-		job.LastSuccess = execution.FinishedAt
-		job.SuccessCount++
-	} else {
-		job.LastError = execution.FinishedAt
-		job.ErrorCount++
-	}
-
-	ok, err := d.store.AtomicJobPut(job, jkv)
-	if err != nil && err != store.ErrKeyModified {
-		log.WithError(err).Fatal("fsm: Error in atomic job save")
-	}
-	if !ok {
-		log.Debug("fsm: Retrying job update")
-		goto Retry
-	}
-
-	return nil
+	return err
 }
 
 func (d *dkronFSM) applySetExecution(buf []byte) interface{} {

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/abronan/valkeyrie/store"
+	"github.com/dgraph-io/badger"
 	"github.com/sirupsen/logrus"
 	"github.com/victorcoder/dkron/cron"
 	"github.com/victorcoder/dkron/proto"
@@ -93,8 +93,6 @@ type Job struct {
 
 	// Job id of job that this job is dependent upon.
 	ParentJob string `json:"parent_job"`
-
-	lock store.Locker
 
 	// Processors to use for this job
 	Processors map[string]PluginConfig `json:"processors"`
@@ -239,7 +237,7 @@ func (j *Job) GetParent() (*Job, error) {
 
 	parentJob, err := j.Agent.Store.GetJob(j.ParentJob, nil)
 	if err != nil {
-		if err == store.ErrKeyNotFound {
+		if err == badger.ErrKeyNotFound {
 			return nil, ErrParentJobNotFound
 		}
 		return nil, err

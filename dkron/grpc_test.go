@@ -19,15 +19,18 @@ func TestGRPCExecutionDone(t *testing.T) {
 	c.NodeName = "test1"
 	c.Server = true
 	c.LogLevel = logLevel
+	c.BootstrapExpect = 1
+	c.DevMode = true
 
 	a := NewAgent(c, nil)
-	s, err := NewStore(a, "")
-	if err != nil {
-		t.Fatal(err)
-	}
 	a.Start()
 
-	time.Sleep(2 * time.Second)
+	for {
+		if a.IsLeader() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	testJob := &Job{
 		Name:           "test",
@@ -37,7 +40,7 @@ func TestGRPCExecutionDone(t *testing.T) {
 		Disabled:       true,
 	}
 
-	if err := s.SetJob(testJob, true); err != nil {
+	if err := a.Store.SetJob(testJob, true); err != nil {
 		t.Fatalf("error creating job: %s", err)
 	}
 
@@ -53,16 +56,16 @@ func TestGRPCExecutionDone(t *testing.T) {
 
 	rc := NewGRPCClient(nil, a)
 	rc.CallExecutionDone(a.getRPCAddr(), testExecution)
-	execs, _ := s.GetExecutions("test")
+	execs, _ := a.Store.GetExecutions("test")
 
 	assert.Len(t, execs, 1)
 	assert.Equal(t, string(testExecution.Output), string(execs[0].Output))
 
 	// Test store execution on a deleted job
-	s.DeleteJob(testJob.Name)
+	a.Store.DeleteJob(testJob.Name)
 
 	testExecution.FinishedAt = time.Now()
-	err = rc.CallExecutionDone(a.getRPCAddr(), testExecution)
+	err := rc.CallExecutionDone(a.getRPCAddr(), testExecution)
 
 	assert.Error(t, err, ErrExecutionDoneForDeletedJob)
 }

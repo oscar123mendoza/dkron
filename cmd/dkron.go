@@ -12,7 +12,7 @@ import (
 )
 
 var cfgFile string
-var config = &dkron.Config{}
+var config = dkron.DefaultConfig()
 
 // dkronCmd represents the dkron command
 var dkronCmd = &cobra.Command{

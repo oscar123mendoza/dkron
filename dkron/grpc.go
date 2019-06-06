@@ -75,6 +75,13 @@ func (grpcs *GRPCServer) SetJob(ctx context.Context, setJobReq *proto.SetJobRequ
 	if err := af.Error(); err != nil {
 		return nil, err
 	}
+	res := af.Response()
+	switch res {
+	case ErrParentJobNotFound:
+		return nil, ErrParentJobNotFound
+	case ErrSameParent:
+		return nil, ErrParentJobNotFound
+	}
 
 	// If everything is ok, restart the scheduler
 	grpcs.agent.SchedulerRestart()
@@ -149,6 +156,9 @@ func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.E
 	// This is the leader at this point, so process the execution, encode the value and apply the log to the cluster.
 	// Get the defined output types for the job, and call them
 	job, err := grpcs.agent.Store.GetJob(execDoneReq.Execution.JobName, nil)
+	if err != nil {
+		return nil, err
+	}
 	origExec := *NewExecutionFromProto(execDoneReq.Execution)
 	execution := origExec
 	for k, v := range job.Processors {

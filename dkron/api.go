@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/abronan/valkeyrie/store"
+	"github.com/dgraph-io/badger"
 	"github.com/gin-contrib/expvar"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -199,7 +199,7 @@ func (h *HTTPTransport) executionsHandler(c *gin.Context) {
 
 	executions, err := h.agent.Store.GetExecutions(job.Name)
 	if err != nil {
-		if err == store.ErrKeyNotFound {
+		if err == badger.ErrKeyNotFound {
 			renderJSON(c, http.StatusOK, &[]Execution{})
 			return
 		}

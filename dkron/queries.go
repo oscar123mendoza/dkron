@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/abronan/valkeyrie/store"
+	"github.com/dgraph-io/badger"
 	"github.com/hashicorp/serf/serf"
 	"github.com/sirupsen/logrus"
 )
@@ -33,7 +33,7 @@ func (a *Agent) RunQuery(ex *Execution) {
 	if err != nil {
 		//Job can be removed and the QuerySchedulerRestart not yet received.
 		//In this case, the job will not be found in the store.
-		if err == store.ErrKeyNotFound {
+		if err == badger.ErrKeyNotFound {
 			log.Warning("agent: Job not found, cancelling this execution")
 			return
 		}
