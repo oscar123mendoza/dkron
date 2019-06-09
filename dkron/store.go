@@ -1,6 +1,7 @@
 package dkron
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"sort"
@@ -292,7 +293,7 @@ func (s *Store) GetJobs(options *JobOptions) ([]*Job, error) {
 		prefix := []byte("jobs")
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 			item := it.Item()
-			v, err := item.Value()
+			v, err := item.ValueCopy(nil)
 			if err != nil {
 				return err
 			}
@@ -337,7 +338,7 @@ func (s *Store) GetJob(name string, options *JobOptions) (*Job, error) {
 			return err
 		}
 
-		res, err := item.Value()
+		res, err := item.ValueCopy(nil)
 		if err != nil {
 			return err
 		}
@@ -421,13 +422,17 @@ func (s *Store) list(prefix string, checkRoot bool) ([]*kv, error) {
 			item := it.Item()
 			k := item.Key()
 
-			body, err := item.Value()
+			// ignore self in listing
+			if bytes.Equal(trimDirectoryKey(k), prefix) {
+				continue
+			}
+
+			body, err := item.ValueCopy(nil)
 			if err != nil {
 				return err
 			}
 
 			kv := &kv{Key: string(k), Value: body}
-
 			kvs = append(kvs, kv)
 		}
 
@@ -552,19 +557,6 @@ func (s *Store) SetExecution(execution *Execution) (string, error) {
 	return key, nil
 }
 
-func (s *Store) unmarshalExecutions(items []*kv, stopWord string) ([]*Execution, error) {
-	var executions []*Execution
-	for _, item := range items {
-		var pbe dkronpb.Execution
-		if err := proto.Unmarshal(item.Value, &pbe); err != nil {
-			return nil, err
-		}
-		execution := NewExecutionFromProto(&pbe)
-		executions = append(executions, execution)
-	}
-	return executions, nil
-}
-
 // DeleteExecutions removes all executions of a job
 func (s *Store) DeleteExecutions(jobName string) error {
 	prefix := []byte(jobName)
@@ -623,4 +615,31 @@ ConflictRetry:
 
 func (s *Store) Shutdown() error {
 	return s.db.Close()
+}
+
+func (s *Store) unmarshalExecutions(items []*kv, stopWord string) ([]*Execution, error) {
+	var executions []*Execution
+	for _, item := range items {
+		var pbe dkronpb.Execution
+
+		if err := proto.Unmarshal(item.Value, &pbe); err != nil {
+			log.WithError(err).WithField("key", item.Key).Debug("error unmarshaling")
+			return nil, err
+		}
+		execution := NewExecutionFromProto(&pbe)
+		executions = append(executions, execution)
+	}
+	return executions, nil
+}
+
+func trimDirectoryKey(key []byte) []byte {
+	if isDirectoryKey(key) {
+		return key[:len(key)-1]
+	}
+
+	return key
+}
+
+func isDirectoryKey(key []byte) bool {
+	return len(key) > 0 && key[len(key)-1] == '/'
 }
