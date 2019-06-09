@@ -10,12 +10,9 @@ To form a cluster, server nodes need to know the address of its peers as in the 
 
 ```yaml
 # dkron.yml
+bootstrap-expect: 3
 join:
 - 10.19.3.9
 - 10.19.4.64
 - 10.19.7.215
 ```
-
-### Etcd
-
-For a more in detail guide of clustering with etcd follow this guide: https://github.com/etcd-io/etcd/blob/master/Documentation/op-guide/clustering.md
